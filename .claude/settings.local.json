@@ -5,7 +5,12 @@
       "Bash(docker-compose restart:*)",
       "Bash(docker exec:*)",
       "Bash(docker-compose down:*)",
-      "Bash(docker-compose up:*)"
+      "Bash(docker-compose up:*)",
+      "Bash(go mod init:*)",
+      "Bash(curl:*)",
+      "Bash(sudo rm:*)",
+      "Bash(sudo tar:*)",
+      "Bash(go build:*)"
     ]
   }
 }
