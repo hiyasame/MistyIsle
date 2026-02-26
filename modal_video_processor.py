@@ -1,65 +1,61 @@
 """
 Modal.com Serverless HLS Video Processor
-从 R2 下载视频 -> HLS 切片 -> 上传回 R2
-
-使用方法:
-    modal run modal_video_processor.py --source-key uploads/video.mp4 --target-prefix videos/123
+---------------------------------------
+Flow:
+1. User uploads video to R2 (e.g., uploads/raw/{video_id}.mp4)
+2. Backend calls this Modal function with video_id
+3. Modal downloads, slices into HLS, uploads back to R2 (e.g., videos/{video_id}/)
+4. Modal notifies Backend via Webhook
 """
 
 import modal
 import os
 import tempfile
 import subprocess
+import time
 from pathlib import Path
 
-# 创建 Modal 应用
-app = modal.App("hls-video-processor")
+# 1. Define the Application and Image
+app = modal.App("video-hls-processor")
 
-# 定义镜像，包含 ffmpeg
+# Custom image with ffmpeg and boto3
 image = (
     modal.Image.debian_slim()
     .apt_install("ffmpeg")
-    .pip_install(
-        "boto3",
-        "requests",
-    )
+    .pip_install("boto3", "requests", "fastapi[standard]")
 )
 
-# R2 配置（通过 Modal secrets 注入）
-# 创建 secret: modal secret create r2-credentials \
-#   R2_ENDPOINT=https://xxx.r2.cloudflarestorage.com \
-#   R2_ACCESS_KEY_ID=xxx \
-#   R2_SECRET_ACCESS_KEY=xxx \
-#   R2_BUCKET=your-bucket
-
+# 2. Configuration & Secrets
+# You need a Modal Secret named "r2-credentials" with:
+# R2_ENDPOINT=https://<accountid>.r2.cloudflarestorage.com
+# R2_ACCESS_KEY_ID=...
+# R2_SECRET_ACCESS_KEY=...
+# R2_BUCKET=...
+# R2_PUBLIC_DOMAIN=https://cdn.example.com (optional, for the final URL)
 
 @app.function(
     image=image,
     secrets=[modal.Secret.from_name("r2-credentials")],
-    timeout=1800,  # 30 分钟超时
-    memory=2048,   # 2GB 内存
-    cpu=2,         # 2 核 CPU
+    timeout=1800,  # 30 mins
+    cpu=4.0,       # More CPUs for faster transcoding
+    memory=4096,   # 4GB RAM
 )
-def process_video_to_hls(source_key: str, target_prefix: str, segment_duration: int = 10):
+def process_video_task(video_id: str, webhook_url: str = None, segment_duration: int = 10):
     """
-    将 R2 上的视频转换为 HLS 格式并上传回 R2
-
-    Args:
-        source_key: R2 上的源视频路径，如 "uploads/video.mp4"
-        target_prefix: HLS 输出路径前缀，如 "videos/123"
-        segment_duration: 每个切片的时长（秒），默认 10
+    Core processing task: R2 -> Local -> FFmpeg -> R2 -> Webhook
     """
     import boto3
     import requests
-    from urllib.parse import urlparse
 
-    # 从环境变量读取 R2 配置
+    # Environment variables from secrets
     r2_endpoint = os.environ["R2_ENDPOINT"]
     r2_access_key = os.environ["R2_ACCESS_KEY_ID"]
     r2_secret_key = os.environ["R2_SECRET_ACCESS_KEY"]
     r2_bucket = os.environ["R2_BUCKET"]
+    # If no public domain, use the endpoint/bucket structure
+    r2_public_domain = os.environ.get("R2_PUBLIC_DOMAIN", f"{r2_endpoint}/{r2_bucket}")
 
-    # 初始化 S3 客户端（R2 兼容 S3 API）
+    # Standard S3 client for R2
     s3_client = boto3.client(
         "s3",
         endpoint_url=r2_endpoint,
@@ -68,220 +64,131 @@ def process_video_to_hls(source_key: str, target_prefix: str, segment_duration: 
         region_name="auto",
     )
 
-    print(f"🎬 开始处理视频: {source_key}")
+    # We assume the user uploaded to this specific path
+    source_key = f"uploads/raw/{video_id}.mp4" 
+    target_dir = f"videos/{video_id}"
+    
+    print(f"🚀 [Video {video_id}] Starting HLS processing...")
 
-    # 创建临时工作目录
     with tempfile.TemporaryDirectory() as temp_dir:
         temp_path = Path(temp_dir)
-
-        # 1. 从 R2 下载视频
-        print(f"⬇️  从 R2 下载视频...")
-        local_input = temp_path / f"input{Path(source_key).suffix}"
-
-        # 生成预签名 URL 用于下载
-        presigned_url = s3_client.generate_presigned_url(
-            "get_object",
-            Params={"Bucket": r2_bucket, "Key": source_key},
-            ExpiresIn=3600,
-        )
-
-        # 下载文件
-        response = requests.get(presigned_url, stream=True)
-        response.raise_for_status()
-
-        total_size = int(response.headers.get("content-length", 0))
-        downloaded = 0
-
-        with open(local_input, "wb") as f:
-            for chunk in response.iter_content(chunk_size=8192):
-                if chunk:
-                    f.write(chunk)
-                    downloaded += len(chunk)
-                    if total_size > 0:
-                        progress = (downloaded / total_size) * 100
-                        print(f"   下载进度: {progress:.1f}%", end="\r")
-
-        print(f"\n✅ 下载完成: {local_input} ({downloaded} bytes)")
-
-        # 2. HLS 切片
-        print(f"🔪 开始 HLS 切片 (每段 {segment_duration} 秒)...")
-
+        local_input = temp_path / "input.mp4"
         hls_output_dir = temp_path / "hls"
-        hls_output_dir.mkdir(exist_ok=True)
+        hls_output_dir.mkdir()
 
+        # --- Step 1: Download from R2 ---
+        print(f"📦 [1/4] Downloading source: {source_key}")
+        try:
+            s3_client.download_file(r2_bucket, source_key, str(local_input))
+        except Exception as e:
+            error_msg = f"Failed to download from R2: {str(e)}"
+            print(f"❌ {error_msg}")
+            if webhook_url:
+                requests.post(webhook_url, json={"video_id": video_id, "status": "failed", "error": error_msg})
+            return {"status": "error", "message": error_msg}
+
+        # --- Step 2: HLS Slicing via FFmpeg ---
+        print(f"🔪 [2/4] Slicing into HLS (segments: {segment_duration}s)")
         m3u8_path = hls_output_dir / "index.m3u8"
-        segment_pattern = hls_output_dir / "segment_%03d.ts"
-
-        # 构建 ffmpeg 命令
-        cmd = [
-            "ffmpeg",
-            "-i", str(local_input),
-            "-codec:", "copy",
+        
+        ffmpeg_cmd = [
+            "ffmpeg", "-i", str(local_input),
+            "-c", "copy",
             "-start_number", "0",
             "-hls_time", str(segment_duration),
             "-hls_list_size", "0",
-            "-hls_segment_filename", str(segment_pattern),
+            "-hls_segment_filename", str(hls_output_dir / "seg_%03d.ts"),
             "-f", "hls",
-            "-y",  # 覆盖已存在文件
-            str(m3u8_path),
+            "-y", str(m3u8_path)
         ]
 
-        print(f"   执行命令: {' '.join(cmd)}")
+        start_time = time.time()
+        # capture_output=True might be slow for huge logs, but fine for typical ffmpeg runs
+        process = subprocess.run(ffmpeg_cmd, capture_output=True, text=True)
+        
+        if process.returncode != 0:
+            error_msg = f"FFmpeg failed: {process.stderr}"
+            print(f"❌ {error_msg}")
+            if webhook_url:
+                requests.post(webhook_url, json={"video_id": video_id, "status": "failed", "error": error_msg})
+            return {"status": "error", "message": error_msg}
+        
+        duration = time.time() - start_time
+        print(f"✅ Slicing completed in {duration:.2f}s")
 
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-        )
-
-        if result.returncode != 0:
-            print(f"❌ FFmpeg 错误: {result.stderr}")
-            raise RuntimeError(f"FFmpeg failed: {result.stderr}")
-
-        # 获取生成的文件列表
+        # --- Step 3: Upload all files to R2 in parallel ---
+        from concurrent.futures import ThreadPoolExecutor
+        
+        print(f"⬆️ [3/4] Uploading segments to {target_dir}/ (parallel)")
         hls_files = list(hls_output_dir.iterdir())
-        print(f"✅ HLS 切片完成，共生成 {len(hls_files)} 个文件")
-
-        # 3. 上传 HLS 文件到 R2
-        print(f"⬆️  上传 HLS 文件到 R2...")
-
-        uploaded_files = []
-        for file_path in hls_files:
-            key = f"{target_prefix}/{file_path.name}"
-
-            # 根据文件类型设置 Content-Type
-            content_type = "video/MP2T"  # .ts 文件
-            if file_path.suffix == ".m3u8":
-                content_type = "application/vnd.apple.mpegurl"
-
-            print(f"   上传: {key}")
-
+        
+        def upload_file(file_path):
+            key = f"{target_dir}/{file_path.name}"
+            content_type = "video/MP2T" if file_path.suffix == ".ts" else "application/vnd.apple.mpegurl"
             with open(file_path, "rb") as f:
                 s3_client.put_object(
                     Bucket=r2_bucket,
                     Key=key,
                     Body=f,
-                    ContentType=content_type,
+                    ContentType=content_type
                 )
+            return key
 
-            uploaded_files.append(key)
+        # Use 20 threads to upload all files continuously for maximum throughput
+        with ThreadPoolExecutor(max_workers=20) as executor:
+            list(executor.map(upload_file, hls_files))
+        
+        playlist_url = f"{r2_public_domain}/{target_dir}/index.m3u8"
+        print(f"✅ Uploaded {len(hls_files)} files in parallel. Playlist: {playlist_url}")
 
-        print(f"✅ 上传完成，共 {len(uploaded_files)} 个文件")
-
-        # 构建公共访问 URL
-        public_url = f"{r2_endpoint}/{r2_bucket}/{target_prefix}/index.m3u8"
-
-        return {
+        # --- Step 4: Notify via Webhook ---
+        result_payload = {
+            "video_id": video_id,
             "status": "success",
-            "source_key": source_key,
-            "target_prefix": target_prefix,
-            "uploaded_files": uploaded_files,
-            "hls_playlist_url": public_url,
-            "segment_count": len([f for f in uploaded_files if f.endswith(".ts")]),
+            "playlist_url": playlist_url,
+            "segments_count": len([f for f in hls_files if f.suffix == ".ts"]),
+            "processing_time": duration
         }
 
+        if webhook_url:
+            print(f"🔗 [4/4] Sending notification to {webhook_url}...")
+            try:
+                # Post the success result to your backend
+                requests.post(webhook_url, json=result_payload, timeout=10)
+            except Exception as e:
+                print(f"⚠️ Webhook failed: {str(e)}")
+        else:
+            print("⏭️ [4/4] No webhook_url provided, skipping notification.")
 
-@app.local_entrypoint()
-def main(
-    source_key: str = None,
-    target_prefix: str = None,
-    segment_duration: int = 10,
-):
-    """
-    本地入口点，用于通过 modal run 命令调用
+        return result_payload
 
-    示例:
-        modal run modal_video_processor.py --source-key uploads/video.mp4 --target-prefix videos/123
-    """
-    if not source_key or not target_prefix:
-        print("❌ 请提供必要参数:")
-        print("   --source-key: R2 上的源视频路径")
-        print("   --target-prefix: HLS 输出路径前缀")
-        print("")
-        print("示例:")
-        print("   modal run modal_video_processor.py --source-key uploads/video.mp4 --target-prefix videos/123")
-        return
-
-    # 调用远程函数
-    result = process_video_to_hls.remote(
-        source_key=source_key,
-        target_prefix=target_prefix,
-        segment_duration=segment_duration,
-    )
-
-    print("\n" + "=" * 50)
-    print("🎉 处理完成!")
-    print("=" * 50)
-    print(f"📁 源文件: {result['source_key']}")
-    print(f"📂 输出路径: {result['target_prefix']}")
-    print(f"📊 切片数量: {result['segment_count']}")
-    print(f"🔗 HLS 播放地址: {result['hls_playlist_url']}")
-
-
-# 批量处理功能
-@app.function(
-    image=image,
-    secrets=[modal.Secret.from_name("r2-credentials")],
-    timeout=3600,
-    memory=2048,
-    cpu=2,
-)
-def batch_process_videos(tasks: list[dict]):
-    """
-    批量处理多个视频
-
-    Args:
-        tasks: 任务列表，每个任务包含 source_key 和 target_prefix
-               如: [{"source_key": "a.mp4", "target_prefix": "videos/1"}, ...]
-    """
-    results = []
-    for task in tasks:
-        try:
-            result = process_video_to_hls.remote(
-                source_key=task["source_key"],
-                target_prefix=task["target_prefix"],
-                segment_duration=task.get("segment_duration", 10),
-            )
-            results.append({"success": True, "result": result})
-        except Exception as e:
-            results.append({"success": False, "error": str(e), "task": task})
-
-    return results
-
-
-# Webhook API 端点（可选）
-@app.function(
-    image=image,
-    secrets=[modal.Secret.from_name("r2-credentials")],
-    timeout=1800,
-    memory=2048,
-    cpu=2,
-)
+# 3. Webhook Entrypoint (Optional: so your backend can just HTTP POST here to start)
+@app.function(image=image, secrets=[modal.Secret.from_name("r2-credentials")])
 @modal.web_endpoint(method="POST")
-def webhook_process_video(request: dict):
+def trigger_process(data: dict):
     """
-    Webhook API 端点，接收 HTTP 请求处理视频
-
-    请求体:
-        {
-            "source_key": "uploads/video.mp4",
-            "target_prefix": "videos/123",
-            "segment_duration": 10  // 可选
-        }
+    HTTP Entrypoint:
+    POST request with {"video_id": "...", "webhook_url": "..."}
     """
-    source_key = request.get("source_key")
-    target_prefix = request.get("target_prefix")
-    segment_duration = request.get("segment_duration", 10)
+    video_id = data.get("video_id")
+    webhook_url = data.get("webhook_url")
+    
+    if not video_id:
+        return {"error": "Missing video_id"}, 400
+    
+    # We use .spawn() to start the task and return immediately
+    # This prevents the HTTP request from timing out during long video processing
+    process_video_task.spawn(video_id, webhook_url)
+    
+    return {"status": "accepted", "video_id": video_id}
 
-    if not source_key or not target_prefix:
-        return {"error": "Missing source_key or target_prefix"}, 400
-
-    try:
-        result = process_video_to_hls.remote(
-            source_key=source_key,
-            target_prefix=target_prefix,
-            segment_duration=segment_duration,
-        )
-        return result
-    except Exception as e:
-        return {"error": str(e)}, 500
+# 4. Local CLI Entrypoint
+@app.local_entrypoint()
+def main(video_id: str = None, webhook: str = None):
+    if not video_id:
+        print("Usage: modal run modal_video_processor.py --video-id <id> [--webhook <url>]")
+        return
+    
+    print(f"--- Starting local test for {video_id} ---")
+    result = process_video_task.remote(video_id, webhook_url=webhook)
+    print(f"--- Result: {result} ---")
