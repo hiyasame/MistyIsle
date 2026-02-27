@@ -1,0 +1,69 @@
+# Misty Isle 测试环境 Docker Compose
+# 包含: PostgreSQL / Redis / SRS
+# 用法: docker compose -f docker-compose.test.yml up -d
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: misty-isle-postgres
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: misty_isle
+    volumes:
+      - misty_pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U postgres" ]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: misty-isle-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - misty_redis_data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: [ "CMD", "redis-cli", "ping" ]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  srs:
+    image: registry.cn-hangzhou.aliyuncs.com/ossrs/srs:6
+    container_name: misty-isle-srs
+    restart: unless-stopped
+    ports:
+      # HTTP API 和 Web 播放器
+      - "8080:8080"
+      # RTMP 推流/播放
+      - "1935:1935"
+      # WebRTC (UDP)
+      - "8000:8000/udp"
+      # SRT
+      - "10080:10080/udp"
+    volumes:
+      - ./conf/srs.conf:/usr/local/srs/conf/srs.conf:ro
+      - ./logs/srs:/usr/local/srs/objs/logs
+      - ./hls:/usr/local/srs/objs/nginx/html
+    environment:
+      - SRS_LOG_LEVEL=info
+      - CANDIDATE=127.0.0.1
+    command: ./objs/srs -c conf/srs.conf
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:8080/api/v1/versions" ]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
+volumes:
+  misty_pg_data:
+  misty_redis_data:

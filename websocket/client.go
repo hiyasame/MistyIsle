@@ -100,7 +100,7 @@ func ServeWs(hub *Hub, c *gin.Context, database *db.DB, conf *cfg.Config) {
 		conn:     conn,
 		send:     make(chan []byte, 256),
 		roomID:   roomID,
-		userID:   user.Username, // 使用 username 而不是数字 ID
+		userID:   userIDStr, // 必须使用真实的数字 ID（的字符串形式），前后端校验才会通过
 		username: user.Username,
 	}
 

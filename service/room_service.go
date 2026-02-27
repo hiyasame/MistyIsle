@@ -52,6 +52,8 @@ func (rm *RoomService) CreateRoom(opts model.RoomOptions, hostID string, srsBase
 	// 不要自动加入房主，等 WebSocket 连接时再加入
 	// 这样如果房主从未连接，房间会在无人时自动清理
 
+	log.Printf("[RoomService.CreateRoom] Created room %s with streamKey %s for host %s", roomID, streamKey, hostID)
+
 	return room
 }
 
@@ -264,22 +266,27 @@ func (rm *RoomService) JoinRoom(roomID, userID string) bool {
 	room, ok := rm.rooms[roomID]
 	if !ok {
 		// 房间不存在，创建新房间（第一个加入的是房主）
+		streamKey := rm.generateStreamKey()
 		room = &model.Room{
-			ID:     roomID,
-			Status: model.RoomStatusIdle,
+			ID:        roomID,
+			Status:    model.RoomStatusIdle,
+			HostID:    userID,
+			StreamKey: streamKey,
 		}
 		rm.rooms[roomID] = room
 		rm.roomUsers[roomID] = make(map[string]int)
-		room.HostID = userID
+
+		log.Printf("[RoomService.JoinRoom] Fallback created room %s with NEW streamKey %s for user %s", roomID, streamKey, userID)
 	}
 
 	if rm.roomUsers[roomID] == nil {
 		rm.roomUsers[roomID] = make(map[string]int)
 	}
 
-	// 如果房间存在但还没有人连接（创建后还没人加入），第一个加入的是房主
-	if len(rm.roomUsers[roomID]) == 0 && room.HostID != "" {
-		log.Printf("Room %s exists but empty, setting %s as host", roomID, userID)
+	// 如果房间存在但目前没有任何人（比如所有人都离开了），
+	// 根据新需求：后续第一个加入房间的人自动成为房主
+	if len(rm.roomUsers[roomID]) == 0 {
+		log.Printf("Room %s is empty, setting %s as new host", roomID, userID)
 		room.HostID = userID
 	}
 
@@ -317,11 +324,15 @@ func (rm *RoomService) LeaveRoom(roomID, userID string) (isEmpty bool, newHostID
 		}
 	}
 
-	// 房间空了，删除房间
+	// 房间空了
 	if len(rm.roomUsers[roomID]) == 0 {
-		log.Printf("Room %s is empty, deleting room", roomID)
-		delete(rm.rooms, roomID)
-		delete(rm.roomUsers, roomID)
+		log.Printf("Room %s is empty (keeping it alive)", roomID)
+		// 回到 idle 状态
+		room.Status = model.RoomStatusIdle
+		room.VideoID = ""
+		room.VideoName = ""
+		room.VideoURL = ""
+
 		return true, ""
 	}
 	log.Printf("Room %s still has %d unique users", roomID, len(rm.roomUsers[roomID]))

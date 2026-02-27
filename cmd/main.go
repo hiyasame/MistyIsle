@@ -122,8 +122,8 @@ func serve(conf *cfg.Config, h *handler.Handler, wsHub *websocket.Hub, database 
 		websocket.ServeWs(wsHub, c, database, conf)
 	})
 
-	log.Println("Server starting on :8080")
-	if err := r.Run(":8080"); err != nil {
+	log.Println("Server starting on :8081")
+	if err := r.Run(":8081"); err != nil {
 		log.Fatal(err)
 	}
 }

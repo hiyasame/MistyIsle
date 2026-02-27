@@ -1,23 +1,28 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, forwardRef, useImperativeHandle } from 'react';
 import Hls from 'hls.js';
 
 /**
  * 同步播放器组件
  * 支持 HLS 视频和直播流，支持同步控制
  */
-export default function SyncPlayer({
+const SyncPlayer = forwardRef(({
   hlsPath,
   isHost = false,
   onHostAction,
   onReady,
   autoplay = false,
   controls = true
-}) {
+}, ref) => {
   const videoRef = useRef(null);
   const hlsRef = useRef(null);
   const [isReady, setIsReady] = useState(false);
   const [error, setError] = useState(null);
   const actionFromRemoteRef = useRef(false); // 标记是否来自远程控制
+
+  // 处理相对路径，确保指向带端口的后端 (SRS) 地址
+  const actualHlsPath = hlsPath?.startsWith('/')
+    ? `${import.meta.env.VITE_SRS_BASE_URL || 'http://localhost:8080'}${hlsPath}`
+    : hlsPath;
 
   // 初始化 HLS
   useEffect(() => {
@@ -72,11 +77,11 @@ export default function SyncPlayer({
         }
       });
 
-      hls.loadSource(hlsPath);
+      hls.loadSource(actualHlsPath);
       hls.attachMedia(video);
     } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
       // Safari 原生支持 HLS
-      video.src = hlsPath;
+      video.src = actualHlsPath;
       video.addEventListener('loadedmetadata', () => {
         console.log('HLS loaded (native)');
         setIsReady(true);
@@ -226,4 +231,6 @@ export default function SyncPlayer({
       )}
     </div>
   );
-}
+});
+
+export default SyncPlayer;

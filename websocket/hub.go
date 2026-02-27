@@ -86,16 +86,29 @@ func (h *Hub) Run() {
 			client.isHost = isHost
 			log.Printf("Client %s joined room %s (host=%v)", client.userID, client.roomID, isHost)
 
-			// 广播用户加入
+			// 获取房间最新信息（可能被 fallback 重新生成了推流密钥）
+			var streamKey, streamURL string
+			if room, ok := h.roomService.GetRoom(client.roomID); ok {
+				streamKey = room.StreamKey
+				streamURL = room.StreamURL
+			}
+
+			// 广播用户加入（如果加入的是房主，连同最新的推流密钥一起发给前端）
+			joinPayload := map[string]interface{}{
+				"user_id":  client.userID,
+				"username": client.username,
+				"is_host":  client.isHost,
+			}
+			if isHost {
+				joinPayload["stream_key"] = streamKey
+				joinPayload["stream_url"] = streamURL
+			}
+
 			h.broadcast <- &RoomMessage{
 				RoomID: client.roomID,
 				Action: "join",
-				Data: mustJSON(map[string]interface{}{
-					"user_id":  client.userID,
-					"username": client.username,
-					"is_host":  client.isHost,
-				}),
-				From: client.userID,
+				Data:   mustJSON(joinPayload),
+				From:   client.userID,
 			}
 
 		case client := <-h.unregister:

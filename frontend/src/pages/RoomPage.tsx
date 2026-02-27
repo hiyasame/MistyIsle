@@ -89,10 +89,18 @@ export default function RoomPage() {
       case 'join':
         // 用户加入（包括自己）
         if (data.data?.user_id) {
+          // 如果是自己加入且后端认定为房主，则更新本地 isHost 状态
+          if (data.data.user_id === userId && data.data.is_host) {
+            setIsHost(true);
+          }
+
           setUsers(prev => {
             // 避免重复添加
             if (prev.find(u => u.user_id === data.data.user_id)) {
-              return prev;
+              // 已经是用户列表里的人了，我们也可以考虑更新TA的信息
+              return prev.map(u =>
+                u.user_id === data.data.user_id ? { ...u, is_host: data.data.is_host } : u
+              );
             }
             return [...prev, {
               user_id: data.data.user_id,
@@ -139,11 +147,11 @@ export default function RoomPage() {
 
       case 'live_started':
         // 直播开始
-        if (data.data?.stream_url) {
+        if (data.data?.url) {
           setCurrentVideo({
             video_id: 'live',
             title: '直播中',
-            hls_path: data.data.stream_url,
+            hls_path: data.data.url,
             is_live: true
           });
         }
