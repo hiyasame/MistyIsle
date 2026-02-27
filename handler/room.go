@@ -82,7 +82,8 @@ func (h *Handler) RoomGet(c *gin.Context) {
 // RoomPlayVideo 播放指定视频（房主调用）
 func (h *Handler) RoomPlayVideo(hub *websocket.Hub) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		userID := c.GetString("userID")
+		userIDUint := c.GetUint64("userID")
+		userID := fmt.Sprintf("%d", userIDUint)
 		roomID := c.Param("id")
 
 		var req struct {
@@ -126,7 +127,8 @@ func (h *Handler) RoomPlayVideo(hub *websocket.Hub) gin.HandlerFunc {
 // RoomTransferHost 移交房主权限
 func (h *Handler) RoomTransferHost(hub *websocket.Hub) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		userID := c.GetString("userID")
+		userIDUint := c.GetUint64("userID")
+		userID := fmt.Sprintf("%d", userIDUint)
 		roomID := c.Param("id")
 
 		var req struct {

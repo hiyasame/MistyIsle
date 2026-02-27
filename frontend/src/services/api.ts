@@ -187,10 +187,10 @@ export const roomApi = {
   },
 
   // 播放视频（房主）
-  async playVideo(roomId: string, videoId: string): Promise<ApiResponse<any>> {
+  async playVideo(roomId: string, videoId: string | number): Promise<ApiResponse<any>> {
     return request(`/room/${roomId}/play`, {
       method: 'POST',
-      body: JSON.stringify({ video_id: videoId })
+      body: JSON.stringify({ video_id: String(videoId) })
     });
   },
 
