@@ -42,7 +42,7 @@ func NewR2(cfg *cfg.Config) (*R2, error) {
 
 	publicURL := cfg.R2PublicURL
 	if publicURL == "" {
-		publicURL = cfg.R2Endpoint // 如果没有配置 CDN，使用 endpoint
+		publicURL = cfg.R2Endpoint + "/" + cfg.R2Bucket // 如果没有配置 CDN，使用 endpoint
 	}
 
 	return &R2{
@@ -99,7 +99,7 @@ func (r *R2) Upload(ctx context.Context, key string, data []byte, opts UploadOpt
 
 	result := &UploadResult{
 		Key: key,
-		URL: fmt.Sprintf("%s/%s/%s", r.endpoint, r.bucket, key),
+		URL: fmt.Sprintf("%s/%s", r.publicURL, key),
 	}
 
 	if opts.ExpireAfter > 0 {

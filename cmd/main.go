@@ -11,9 +11,15 @@ import (
 	"misty-isle/websocket"
 
 	"github.com/gin-gonic/gin"
+	"github.com/joho/godotenv"
 )
 
 func main() {
+	// 加载 .env 文件
+	if err := godotenv.Load(); err != nil {
+		log.Println("Warning: .env file not found, using environment variables")
+	}
+
 	conf := cfg.Load()
 
 	// 连接数据库
@@ -46,22 +52,21 @@ func main() {
 	// 初始化邮件客户端
 	email := utils.NewEmailClient(conf)
 
-	// 初始化视频处理器
-	videoProcessor := service.NewVideoProcessor(database, r2, 2) // 2个并发 worker
-	videoProcessor.Start()
-	defer videoProcessor.Stop()
+	// 初始化共享的 RoomService（Hub 和 Handler 共用同一个实例）
+	roomService := service.NewRoomService()
 
-	// 初始化 Handler（依赖注入）
-	h := handler.New(conf, database, r2, redis, email, videoProcessor)
+	// 初始化 WebSocket Hub
+	wsHub := websocket.NewHub(roomService)
+	go wsHub.Run()
 
-	serve(conf, h)
+	// 初始化 Handler（依赖注入，传入同一个 roomService）
+	h := handler.New(conf, database, r2, redis, email, wsHub, roomService)
+
+	serve(conf, h, wsHub, database)
 }
 
-func serve(conf *cfg.Config, h *handler.Handler) {
+func serve(conf *cfg.Config, h *handler.Handler, wsHub *websocket.Hub, database *db.DB) {
 	r := gin.Default()
-	// WebSocket Hub
-	wsHub := websocket.NewHub(h.RoomService)
-	go wsHub.Run()
 
 	// 全局中间件
 	r.Use(middleware.CORS())
@@ -94,12 +99,16 @@ func serve(conf *cfg.Config, h *handler.Handler) {
 
 	// 视频服务
 	video := r.Group("/video")
-	video.Use(middleware.Auth(*conf))
 	{
-		video.POST("/upload", h.VideoUpload)
-		video.GET("/list", h.VideoList)
-		video.GET("/:id", h.VideoGet)
-		video.GET("/:id/status", h.VideoStatus)
+		// 需要认证的接口
+		video.POST("/init", middleware.Auth(*conf), h.VideoInit)       // 初始化上传，获取预签名URL
+		video.POST("/process", middleware.Auth(*conf), h.VideoProcess) // 前端上传完成后触发处理
+		video.GET("/list", middleware.Auth(*conf), h.VideoList)
+		video.GET("/:id", middleware.Auth(*conf), h.VideoGet)
+		video.GET("/:id/status", middleware.Auth(*conf), h.VideoStatus)
+
+		// Webhook（无需认证）
+		video.POST("/webhook", h.VideoWebhook) // Modal 回调接口
 	}
 
 	// SRS 回调
@@ -108,9 +117,9 @@ func serve(conf *cfg.Config, h *handler.Handler) {
 		srs.POST("/callback", h.SRSCallback(wsHub))
 	}
 
-	// WebSocket 信令服务
+	// WebSocket 信令服务（从 URL 参数获取 token）
 	r.GET("/ws/:roomId", func(c *gin.Context) {
-		websocket.ServeWs(wsHub, c)
+		websocket.ServeWs(wsHub, c, database, conf)
 	})
 
 	log.Println("Server starting on :8080")

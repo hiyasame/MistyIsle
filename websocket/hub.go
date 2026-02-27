@@ -13,15 +13,26 @@ import (
 type Hub struct {
 	// 房间ID -> 客户端集合
 	rooms map[string]utils.Set[*Client]
+	// 用户ID -> 客户端集合（支持用户级通知）
+	users map[string]utils.Set[*Client]
 	// 房间状态管理（包含 host、users 等）
 	roomService *service.RoomService
 	// 广播消息
 	broadcast chan *RoomMessage
+	// 用户级通知
+	userNotify chan *UserNotification
 	// 注册客户端
 	register chan *Client
 	// 注销客户端
 	unregister chan *Client
 	mu         sync.RWMutex
+}
+
+// UserNotification 用户级通知（不依赖房间）
+type UserNotification struct {
+	UserID string          `json:"user_id"`
+	Type   string          `json:"type"` // video_status, etc.
+	Data   json.RawMessage `json:"data"`
 }
 
 type RoomMessage struct {
@@ -43,10 +54,12 @@ var hostOnlyActions = map[string]bool{
 func NewHub(roomService *service.RoomService) *Hub {
 	return &Hub{
 		rooms:       make(map[string]utils.Set[*Client]),
+		users:       make(map[string]utils.Set[*Client]),
 		roomService: roomService,
-		broadcast:   make(chan *RoomMessage),
-		register:    make(chan *Client),
-		unregister:  make(chan *Client),
+		broadcast:   make(chan *RoomMessage, 100),
+		userNotify:  make(chan *UserNotification, 100),
+		register:    make(chan *Client, 100),
+		unregister:  make(chan *Client, 100),
 	}
 }
 
@@ -55,10 +68,17 @@ func (h *Hub) Run() {
 		select {
 		case client := <-h.register:
 			h.mu.Lock()
+			// 注册到房间
 			if h.rooms[client.roomID] == nil {
 				h.rooms[client.roomID] = make(utils.Set[*Client])
 			}
 			h.rooms[client.roomID][client] = struct{}{}
+
+			// 注册到用户连接池
+			if h.users[client.userID] == nil {
+				h.users[client.userID] = make(utils.Set[*Client])
+			}
+			h.users[client.userID][client] = struct{}{}
 			h.mu.Unlock()
 
 			// 通过 RoomService 管理房间状态
@@ -70,12 +90,17 @@ func (h *Hub) Run() {
 			h.broadcast <- &RoomMessage{
 				RoomID: client.roomID,
 				Action: "join",
-				Data:   mustJSON(map[string]interface{}{"user_id": client.userID, "is_host": client.isHost}),
-				From:   client.userID,
+				Data: mustJSON(map[string]interface{}{
+					"user_id":  client.userID,
+					"username": client.username,
+					"is_host":  client.isHost,
+				}),
+				From: client.userID,
 			}
 
 		case client := <-h.unregister:
 			h.mu.Lock()
+			// 从房间移除
 			if clients, ok := h.rooms[client.roomID]; ok {
 				if _, ok := clients[client]; ok {
 					delete(clients, client)
@@ -85,6 +110,14 @@ func (h *Hub) Run() {
 					if len(clients) == 0 {
 						delete(h.rooms, client.roomID)
 					}
+				}
+			}
+
+			// 从用户连接池移除
+			if clients, ok := h.users[client.userID]; ok {
+				delete(clients, client)
+				if len(clients) == 0 {
+					delete(h.users, client.userID)
 				}
 			}
 			h.mu.Unlock()
@@ -113,6 +146,28 @@ func (h *Hub) Run() {
 				Action: "leave",
 				Data:   mustJSON(map[string]interface{}{"user_id": client.userID}),
 				From:   client.userID,
+			}
+
+		case notify := <-h.userNotify:
+			if notify == nil {
+				continue
+			}
+
+			h.mu.RLock()
+			clients := h.users[notify.UserID]
+			h.mu.RUnlock()
+
+			if clients != nil {
+				data, _ := json.Marshal(notify)
+				for client := range clients {
+					select {
+					case client.send <- data:
+					default:
+						// 发送失败，关闭连接
+						close(client.send)
+						delete(clients, client)
+					}
+				}
 			}
 
 		case msg := <-h.broadcast:
@@ -215,6 +270,16 @@ func (h *Hub) BroadcastToRoom(roomID, action string, data []byte, from string) {
 		Action: action,
 		Data:   data,
 		From:   from,
+	}
+}
+
+// NotifyUser 向指定用户发送通知（供外部调用）
+func (h *Hub) NotifyUser(userID, notifyType string, data interface{}) {
+	jsonData, _ := json.Marshal(data)
+	h.userNotify <- &UserNotification{
+		UserID: userID,
+		Type:   notifyType,
+		Data:   jsonData,
 	}
 }
 

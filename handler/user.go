@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"fmt"
 	"io"
 	"net/http"
 	"strconv"
@@ -16,34 +17,31 @@ import (
 func (h *Handler) UserRegister(c *gin.Context) {
 	var req model.RegisterRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		h.Error(c, http.StatusBadRequest, err.Error())
 		return
 	}
 
 	// 调用 service 注册
 	user, err := h.UserService.Register(&req)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		h.Error(c, http.StatusBadRequest, err.Error())
 		return
 	}
 
 	// 生成 JWT token
 	token, err := generateJWT(user.ID, h.Cfg.JWTSecret, h.Cfg.JWTExpire)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to generate token"})
+		h.Error(c, http.StatusInternalServerError, "failed to generate token")
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"code": 0,
-		"data": gin.H{
-			"token": token,
-			"user": gin.H{
-				"user_id":  user.ID,
-				"username": user.Username,
-				"email":    user.Email,
-				"avatar":   user.Avatar,
-			},
+	h.Success(c, gin.H{
+		"token": token,
+		"user": gin.H{
+			"user_id":  fmt.Sprintf("%d", user.ID),
+			"username": user.Username,
+			"email":    user.Email,
+			"avatar":   user.Avatar,
 		},
 	})
 }
@@ -52,34 +50,31 @@ func (h *Handler) UserRegister(c *gin.Context) {
 func (h *Handler) UserLogin(c *gin.Context) {
 	var req model.LoginRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		h.Error(c, http.StatusBadRequest, err.Error())
 		return
 	}
 
 	// 调用 service 登录
 	user, err := h.UserService.Login(&req)
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
+		h.Error(c, http.StatusUnauthorized, err.Error())
 		return
 	}
 
 	// 生成 JWT token
 	token, err := generateJWT(user.ID, h.Cfg.JWTSecret, h.Cfg.JWTExpire)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to generate token"})
+		h.Error(c, http.StatusInternalServerError, "failed to generate token")
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"code": 0,
-		"data": gin.H{
-			"token": token,
-			"user": gin.H{
-				"user_id":  user.ID,
-				"username": user.Username,
-				"email":    user.Email,
-				"avatar":   user.Avatar,
-			},
+	h.Success(c, gin.H{
+		"token": token,
+		"user": gin.H{
+			"user_id":  fmt.Sprintf("%d", user.ID),
+			"username": user.Username,
+			"email":    user.Email,
+			"avatar":   user.Avatar,
 		},
 	})
 }
@@ -88,17 +83,16 @@ func (h *Handler) UserLogin(c *gin.Context) {
 func (h *Handler) SendVerifyCode(c *gin.Context) {
 	var req model.SendVerifyCodeRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		h.Error(c, http.StatusBadRequest, err.Error())
 		return
 	}
 
 	if err := h.UserService.SendVerifyCode(req.Email); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		h.Error(c, http.StatusBadRequest, err.Error())
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"code":    0,
+	h.Success(c, gin.H{
 		"message": "verification code sent",
 	})
 }
@@ -107,18 +101,17 @@ func (h *Handler) SendVerifyCode(c *gin.Context) {
 func (h *Handler) ForgotPassword(c *gin.Context) {
 	var req model.ForgotPasswordRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		h.Error(c, http.StatusBadRequest, err.Error())
 		return
 	}
 
 	if err := h.UserService.ForgotPassword(req.Email); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		h.Error(c, http.StatusBadRequest, err.Error())
 		return
 	}
 
 	// 无论邮箱是否存在，都返回成功（安全考虑）
-	c.JSON(http.StatusOK, gin.H{
-		"code":    0,
+	h.Success(c, gin.H{
 		"message": "if email exists, reset link will be sent",
 	})
 }
@@ -127,17 +120,16 @@ func (h *Handler) ForgotPassword(c *gin.Context) {
 func (h *Handler) ResetPassword(c *gin.Context) {
 	var req model.ResetPasswordRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		h.Error(c, http.StatusBadRequest, err.Error())
 		return
 	}
 
 	if err := h.UserService.ResetPassword(req.Token, req.Password); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		h.Error(c, http.StatusBadRequest, err.Error())
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"code":    0,
+	h.Success(c, gin.H{
 		"message": "password reset successfully",
 	})
 }
@@ -148,20 +140,17 @@ func (h *Handler) UserProfile(c *gin.Context) {
 
 	user, err := h.UserService.GetUserByID(userID)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "user not found"})
+		h.Error(c, http.StatusNotFound, "user not found")
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"code": 0,
-		"data": gin.H{
-			"user_id":    user.ID,
-			"username":   user.Username,
-			"email":      user.Email,
-			"avatar":     user.Avatar,
-			"bio":        user.Bio,
-			"created_at": user.CreatedAt,
-		},
+	h.Success(c, gin.H{
+		"user_id":    fmt.Sprintf("%d", user.ID),
+		"username":   user.Username,
+		"email":      user.Email,
+		"avatar":     user.Avatar,
+		"bio":        user.Bio,
+		"created_at": user.CreatedAt,
 	})
 }
 
@@ -171,16 +160,30 @@ func (h *Handler) UserUpdate(c *gin.Context) {
 
 	var req model.UserUpdateRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		h.Error(c, http.StatusBadRequest, err.Error())
 		return
 	}
 
 	if err := h.UserService.UpdateUser(userID, &req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		h.Error(c, http.StatusBadRequest, err.Error())
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"code": 0})
+	// 返回更新后的用户信息
+	user, err := h.UserService.GetUserByID(userID)
+	if err != nil {
+		h.Error(c, http.StatusInternalServerError, "failed to get updated user")
+		return
+	}
+
+	h.Success(c, gin.H{
+		"user_id":    fmt.Sprintf("%d", user.ID),
+		"username":   user.Username,
+		"email":      user.Email,
+		"avatar":     user.Avatar,
+		"bio":        user.Bio,
+		"created_at": user.CreatedAt,
+	})
 }
 
 // UserAvatar 上传头像
@@ -189,36 +192,33 @@ func (h *Handler) UserAvatar(c *gin.Context) {
 
 	file, header, err := c.Request.FormFile("avatar")
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "no file uploaded"})
+		h.Error(c, http.StatusBadRequest, "no file uploaded")
 		return
 	}
 	defer file.Close()
 
 	// 检查文件大小（最大 5MB）
 	if header.Size > 5*1024*1024 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "file too large (max 5MB)"})
+		h.Error(c, http.StatusBadRequest, "file too large (max 5MB)")
 		return
 	}
 
 	// 读取文件内容
 	data, err := io.ReadAll(file)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to read file"})
+		h.Error(c, http.StatusInternalServerError, "failed to read file")
 		return
 	}
 
 	// 上传并更新头像
 	url, err := h.UserService.UpdateAvatar(userID, data, header.Header.Get("Content-Type"))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		h.Error(c, http.StatusInternalServerError, err.Error())
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"code": 0,
-		"data": gin.H{
-			"url": url,
-		},
+	h.Success(c, gin.H{
+		"avatar_url": url,
 	})
 }
 

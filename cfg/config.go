@@ -52,6 +52,10 @@ type Config struct {
 	// 前端地址（用于邮件链接等）
 	FrontendURL string `env:"FRONTEND_URL" default:"http://localhost:3000"`
 
+	// Modal.com 配置
+	ModalEndpoint string `env:"MODAL_ENDPOINT" default:""` // Modal 云函数 HTTP 端点
+	ModalToken    string `env:"MODAL_TOKEN" default:""`    // Modal 认证 token（可选）
+
 	// 环境
 	Env string `env:"APP_ENV" default:"development"` // development, production
 }
@@ -95,6 +99,9 @@ func Load() *Config {
 	cfg.RedisDB = getEnvInt("REDIS_DB", 0)
 
 	cfg.FrontendURL = getEnv("FRONTEND_URL", "http://localhost:3000")
+
+	cfg.ModalEndpoint = getEnv("MODAL_ENDPOINT", "")
+	cfg.ModalToken = getEnv("MODAL_TOKEN", "")
 
 	cfg.Env = getEnv("APP_ENV", "development")
 

@@ -21,7 +21,7 @@ func (h *Handler) RoomCreate(c *gin.Context) {
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		h.Error(c, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -32,40 +32,24 @@ func (h *Handler) RoomCreate(c *gin.Context) {
 		Desc: req.Desc,
 	}, fmt.Sprintf("%d", userID), srsRTMPURL)
 
-	c.JSON(http.StatusOK, gin.H{
-		"code": 0,
-		"data": gin.H{
-			"room_id":      room.ID,
-			"name":         room.Name,
-			"desc":         room.Desc,
-			"host_id":      room.HostID,
-			"ws_url":       fmt.Sprintf("/ws/%s", room.ID),
-			"stream_url":   room.StreamURL,  // 房主用来推流
-			"stream_key":   room.StreamKey,  // 推流密钥
-			"live_hls_url": room.LiveHLSURL, // 观众播放地址
-		},
+	h.Success(c, gin.H{
+		"room_id":      room.ID,
+		"name":         room.Name,
+		"desc":         room.Desc,
+		"host_id":      room.HostID,
+		"ws_url":       fmt.Sprintf("/ws/%s", room.ID),
+		"stream_url":   room.StreamURL,  // 房主用来推流
+		"stream_key":   room.StreamKey,  // 推流密钥
+		"live_hls_url": room.LiveHLSURL, // 观众播放地址
 	})
 }
 
 // RoomList 房间列表
 func (h *Handler) RoomList(c *gin.Context) {
-	// 使用 h.db 查询房间列表
-	rooms := h.RoomService.ListRoom()
-	list := make([]gin.H, len(rooms))
-	for i, room := range rooms {
-		list[i] = gin.H{
-			"room_id": room.ID,
-			"name":    room.Name,
-			"desc":    room.Desc,
-			"host_id": room.HostID,
-		}
-	}
+	rooms := h.RoomService.ListRoomWithUsers()
 
-	c.JSON(http.StatusOK, gin.H{
-		"code": 0,
-		"data": gin.H{
-			"list": list,
-		},
+	h.Success(c, gin.H{
+		"list": rooms,
 	})
 }
 
@@ -74,26 +58,24 @@ func (h *Handler) RoomGet(c *gin.Context) {
 	roomID := c.Param("id")
 
 	room, ok := h.RoomService.GetRoom(roomID)
-	players := h.RoomService.GetRoomUsers(roomID)
 	if !ok {
-		c.JSON(http.StatusOK, gin.H{
-			"code":  http.StatusNotFound,
-			"error": "Room not found",
-		})
+		h.Error(c, http.StatusNotFound, "Room not found")
+		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"code": 0,
-		"data": gin.H{
-			"room_id":      room.ID,
-			"name":         room.Name,
-			"status":       room.Status,
-			"video_url":    room.VideoURL,
-			"live_hls_url": room.LiveHLSURL,
-			"host_id":      room.HostID,
-			"player_count": len(players),
-			"players":      players,
-		},
+	players := h.RoomService.GetRoomUsers(roomID)
+
+	h.Success(c, gin.H{
+		"room_id":      room.ID,
+		"name":         room.Name,
+		"status":       room.Status,
+		"video_url":    room.VideoURL,
+		"live_hls_url": room.LiveHLSURL,
+		"host_id":      room.HostID,
+		"player_count": len(players),
+		"players":      players,
+		"stream_url":   room.StreamURL,
+		"stream_key":   room.StreamKey,
 	})
 }
 
@@ -109,18 +91,18 @@ func (h *Handler) RoomPlayVideo(hub *websocket.Hub) gin.HandlerFunc {
 		}
 
 		if err := c.ShouldBindJSON(&req); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			h.Error(c, http.StatusBadRequest, err.Error())
 			return
 		}
 
 		// 验证用户是房主
 		if !hub.IsHost(roomID, userID) {
-			c.JSON(http.StatusForbidden, gin.H{"error": "only host can play video"})
+			h.Error(c, http.StatusForbidden, "only host can play video")
 			return
 		}
 
-		// TODO: 查询视频 hls_url
-		videoURL := "https://cdn.example.com/hls/" + req.VideoID + "/index.m3u8"
+		// 查询视频 hls_url
+		videoURL := h.Cfg.R2PublicURL + "/videos/" + req.VideoID + "/index.m3u8"
 
 		// 更新房间状态
 		hub.GetRoomService().PlayVideo(roomID, req.VideoID, req.VideoName, videoURL)
@@ -129,17 +111,14 @@ func (h *Handler) RoomPlayVideo(hub *websocket.Hub) gin.HandlerFunc {
 		data, _ := json.Marshal(map[string]interface{}{
 			"video_id":   req.VideoID,
 			"video_name": req.VideoName,
-			"video_url":  videoURL,
+			"video_path": videoURL,
 		})
 		hub.BroadcastToRoom(roomID, "change_video", data, userID)
 
-		c.JSON(http.StatusOK, gin.H{
-			"code": 0,
-			"data": gin.H{
-				"video_id":   req.VideoID,
-				"video_name": req.VideoName,
-				"video_url":  videoURL,
-			},
+		h.Success(c, gin.H{
+			"video_id":   req.VideoID,
+			"video_name": req.VideoName,
+			"video_url":  videoURL,
 		})
 	}
 }
@@ -155,19 +134,19 @@ func (h *Handler) RoomTransferHost(hub *websocket.Hub) gin.HandlerFunc {
 		}
 
 		if err := c.ShouldBindJSON(&req); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			h.Error(c, http.StatusBadRequest, err.Error())
 			return
 		}
 
 		// 不能转让给自己
 		if userID == req.NewHostID {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "cannot transfer to yourself"})
+			h.Error(c, http.StatusBadRequest, "cannot transfer to yourself")
 			return
 		}
 
 		// 执行移交
 		if !hub.TransferHost(roomID, userID, req.NewHostID) {
-			c.JSON(http.StatusForbidden, gin.H{"error": "transfer failed, check if you are host and target user is in room"})
+			h.Error(c, http.StatusForbidden, "transfer failed, check if you are host and target user is in room")
 			return
 		}
 
@@ -178,11 +157,8 @@ func (h *Handler) RoomTransferHost(hub *websocket.Hub) gin.HandlerFunc {
 		})
 		hub.BroadcastToRoom(roomID, "host_changed", data, userID)
 
-		c.JSON(http.StatusOK, gin.H{
-			"code": 0,
-			"data": gin.H{
-				"new_host_id": req.NewHostID,
-			},
+		h.Success(c, gin.H{
+			"new_host_id": req.NewHostID,
 		})
 	}
 }

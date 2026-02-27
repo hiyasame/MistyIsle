@@ -25,7 +25,7 @@ func (h *Handler) SRSCallback(hub *websocket.Hub) gin.HandlerFunc {
 		}
 
 		if err := c.ShouldBindJSON(&req); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			h.Error(c, http.StatusBadRequest, err.Error())
 			return
 		}
 
@@ -38,14 +38,14 @@ func (h *Handler) SRSCallback(hub *websocket.Hub) gin.HandlerFunc {
 			// 开始推流，验证推流密钥
 			room, ok := hub.GetRoomService().GetRoom(roomID)
 			if !ok {
-				c.JSON(http.StatusForbidden, gin.H{"code": 1, "error": "room not found"})
+				h.Error(c, http.StatusForbidden, "room not found")
 				return
 			}
 
 			// 从 Param 解析推流密钥，格式: ?key=xxx
 			streamKey := parseStreamKey(req.Param)
 			if streamKey != room.StreamKey {
-				c.JSON(http.StatusForbidden, gin.H{"code": 1, "error": "invalid stream key"})
+				h.Error(c, http.StatusForbidden, "invalid stream key")
 				return
 			}
 
@@ -67,7 +67,7 @@ func (h *Handler) SRSCallback(hub *websocket.Hub) gin.HandlerFunc {
 		}
 
 		// SRS 要求返回 code 0 表示成功
-		c.JSON(http.StatusOK, gin.H{"code": 0})
+		h.Success(c, gin.H{})
 	}
 }
 

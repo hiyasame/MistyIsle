@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"html/template"
+	"mime"
 	"net/smtp"
 	"strings"
 
@@ -27,8 +28,11 @@ func (e *EmailClient) SendEmail(to []string, subject, body string) error {
 	}
 
 	from := e.cfg.SMTPUsername
+	fromHeader := from
 	if e.cfg.SMTPFrom != "" {
-		from = e.cfg.SMTPFrom
+		// MIME 编码显示名称，符合 RFC5322/RFC2047
+		encodedName := mime.QEncoding.Encode("UTF-8", e.cfg.SMTPFrom)
+		fromHeader = fmt.Sprintf("%s <%s>", encodedName, from)
 	}
 
 	// 构建邮件内容
@@ -40,7 +44,7 @@ func (e *EmailClient) SendEmail(to []string, subject, body string) error {
 			"\r\n"+
 			"%s",
 		strings.Join(to, ","),
-		from,
+		fromHeader,
 		subject,
 		body,
 	))
@@ -58,8 +62,11 @@ func (e *EmailClient) SendHTMLEmail(to []string, subject, htmlBody string) error
 	}
 
 	from := e.cfg.SMTPUsername
+	fromHeader := from
 	if e.cfg.SMTPFrom != "" {
-		from = e.cfg.SMTPFrom
+		// MIME 编码显示名称，符合 RFC5322/RFC2047
+		encodedName := mime.QEncoding.Encode("UTF-8", e.cfg.SMTPFrom)
+		fromHeader = fmt.Sprintf("%s <%s>", encodedName, from)
 	}
 
 	// 构建邮件内容
@@ -71,7 +78,7 @@ func (e *EmailClient) SendHTMLEmail(to []string, subject, htmlBody string) error
 			"\r\n"+
 			"%s",
 		strings.Join(to, ","),
-		from,
+		fromHeader,
 		subject,
 		htmlBody,
 	))

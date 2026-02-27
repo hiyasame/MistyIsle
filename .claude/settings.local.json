@@ -10,7 +10,9 @@
       "Bash(curl:*)",
       "Bash(sudo rm:*)",
       "Bash(sudo tar:*)",
-      "Bash(go build:*)"
+      "Bash(go build:*)",
+      "WebSearch",
+      "WebFetch(domain:developers.cloudflare.com)"
     ]
   }
 }

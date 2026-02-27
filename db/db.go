@@ -217,8 +217,8 @@ func (d *DB) UpdateUser(userID uint64, updates map[string]interface{}) error {
 // CreateVideo 创建视频记录
 func (d *DB) CreateVideo(video *model.Video) error {
 	sql := `
-		INSERT INTO videos (user_id, title, description, status, original_url, original_size, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		INSERT INTO videos (user_id, title, description, status, r2_raw_key, original_size, expires_at, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 		RETURNING id
 	`
 	return d.pool.QueryRow(context.Background(), sql,
@@ -226,25 +226,27 @@ func (d *DB) CreateVideo(video *model.Video) error {
 		video.Title,
 		video.Description,
 		video.Status,
-		video.OriginalURL,
+		video.R2RawKey,
 		video.OriginalSize,
+		video.ExpiresAt,
 		video.CreatedAt,
 		video.UpdatedAt,
 	).Scan(&video.ID)
 }
 
-// GetVideoByID 根据ID获取视频
+// GetVideoByID 根据ID获取视频（自动过滤过期记录）
 func (d *DB) GetVideoByID(videoID uint64) (*model.Video, error) {
 	sql := `
-		SELECT id, user_id, title, description, status, progress, original_url, original_size,
-			duration, hls_url, error_msg, created_at, updated_at
-		FROM videos WHERE id = $1
+		SELECT id, user_id, title, description, status, progress, r2_raw_key, original_size,
+			duration, hls_path, error_msg, expires_at, created_at, updated_at
+		FROM videos
+		WHERE id = $1 AND (expires_at IS NULL OR expires_at > NOW())
 	`
 	video := &model.Video{}
 	err := d.pool.QueryRow(context.Background(), sql, videoID).Scan(
 		&video.ID, &video.UserID, &video.Title, &video.Description,
-		&video.Status, &video.Progress, &video.OriginalURL, &video.OriginalSize,
-		&video.Duration, &video.HLSURL, &video.ErrorMsg,
+		&video.Status, &video.Progress, &video.R2RawKey, &video.OriginalSize,
+		&video.Duration, &video.HLSPath, &video.ErrorMsg, &video.ExpiresAt,
 		&video.CreatedAt, &video.UpdatedAt,
 	)
 	if err != nil {
@@ -253,12 +255,14 @@ func (d *DB) GetVideoByID(videoID uint64) (*model.Video, error) {
 	return video, nil
 }
 
-// GetVideosByUserID 获取用户的视频列表
+// GetVideosByUserID 获取用户的视频列表（自动过滤过期记录）
 func (d *DB) GetVideosByUserID(userID uint64) ([]*model.Video, error) {
 	sql := `
-		SELECT id, user_id, title, description, status, progress, original_url, original_size,
-			duration, hls_url, error_msg, created_at, updated_at
-		FROM videos WHERE user_id = $1 ORDER BY created_at DESC
+		SELECT id, user_id, title, description, status, progress, r2_raw_key, original_size,
+			duration, hls_path, error_msg, expires_at, created_at, updated_at
+		FROM videos
+		WHERE user_id = $1 AND (expires_at IS NULL OR expires_at > NOW())
+		ORDER BY created_at DESC
 	`
 	rows, err := d.pool.Query(context.Background(), sql, userID)
 	if err != nil {
@@ -271,8 +275,8 @@ func (d *DB) GetVideosByUserID(userID uint64) ([]*model.Video, error) {
 		video := &model.Video{}
 		err := rows.Scan(
 			&video.ID, &video.UserID, &video.Title, &video.Description,
-			&video.Status, &video.Progress, &video.OriginalURL, &video.OriginalSize,
-			&video.Duration, &video.HLSURL, &video.ErrorMsg,
+			&video.Status, &video.Progress, &video.R2RawKey, &video.OriginalSize,
+			&video.Duration, &video.HLSPath, &video.ErrorMsg, &video.ExpiresAt,
 			&video.CreatedAt, &video.UpdatedAt,
 		)
 		if err != nil {
@@ -305,6 +309,16 @@ func (d *DB) UpdateVideo(videoID uint64, updates map[string]interface{}) error {
 
 	_, err := d.pool.Exec(context.Background(), sql, args...)
 	return err
+}
+
+// CleanupExpiredVideos 清理过期视频记录（定时任务调用）
+func (d *DB) CleanupExpiredVideos() (int64, error) {
+	sql := `DELETE FROM videos WHERE expires_at IS NOT NULL AND expires_at <= NOW()`
+	result, err := d.pool.Exec(context.Background(), sql)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 // joinStrings 辅助函数
