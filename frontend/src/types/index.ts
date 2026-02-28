@@ -67,16 +67,51 @@ export interface RoomUser {
   is_host: boolean;
 }
 
+// WebSocket 消息数据类型
+export interface PlaybackData {
+  time?: number;
+}
+
+export interface JoinData {
+  user_id: string;
+  username?: string;
+  is_host?: boolean;
+  stream_key?: string;
+  stream_url?: string;
+}
+
+export interface LeaveData {
+  user_id: string;
+}
+
+export interface ChangeVideoData {
+  video?: Video;
+  video_id?: string;
+  video_name?: string;
+  video_path?: string;
+}
+
+export interface HostTransferData {
+  old_host_id?: string;
+  new_host_id: string;
+}
+
+export interface LiveData {
+  stream?: string;
+  url?: string;
+}
+
 // WebSocket 消息
 export interface RoomMessage {
-  room_id: string;
+  room_id?: string;
   action: RoomAction;
-  data: any;
-  from: string;
+  data?: PlaybackData | JoinData | LeaveData | ChangeVideoData | HostTransferData | LiveData;
+  from?: string;
   is_host?: boolean;
 }
 
 export type RoomAction =
+  | 'connected'
   | 'play'
   | 'pause'
   | 'seek'

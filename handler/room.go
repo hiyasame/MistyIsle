@@ -33,14 +33,14 @@ func (h *Handler) RoomCreate(c *gin.Context) {
 	}, fmt.Sprintf("%d", userID), srsRTMPURL)
 
 	h.Success(c, gin.H{
-		"room_id":      room.ID,
-		"name":         room.Name,
-		"desc":         room.Desc,
-		"host_id":      room.HostID,
-		"ws_url":       fmt.Sprintf("/ws/%s", room.ID),
-		"stream_url":   room.StreamURL,  // 房主用来推流
-		"stream_key":   room.StreamKey,  // 推流密钥
-		"live_hls_url": room.LiveHLSURL, // 观众播放地址
+		"room_id":       room.ID,
+		"name":          room.Name,
+		"desc":          room.Desc,
+		"host_id":       room.HostID,
+		"ws_url":        fmt.Sprintf("/ws/%s", room.ID),
+		"stream_url":    room.StreamURL,   // 房主用来推流
+		"stream_key":    room.StreamKey,   // 推流密钥
+		"live_hls_path": room.LiveHLSPath, // 直播相对路径
 	})
 }
 
@@ -65,18 +65,39 @@ func (h *Handler) RoomGet(c *gin.Context) {
 
 	players := h.RoomService.GetRoomUsers(roomID)
 
-	h.Success(c, gin.H{
+	response := gin.H{
 		"room_id":      room.ID,
 		"name":         room.Name,
+		"desc":         room.Desc,
 		"status":       room.Status,
-		"video_url":    room.VideoURL,
-		"live_hls_url": room.LiveHLSURL,
 		"host_id":      room.HostID,
 		"player_count": len(players),
 		"players":      players,
 		"stream_url":   room.StreamURL,
 		"stream_key":   room.StreamKey,
-	})
+	}
+
+	// 如果正在播放视频，返回视频信息
+	if room.Status == model.RoomStatusPlayingVOD && room.VideoPath != "" {
+		response["current_video"] = gin.H{
+			"video_id": room.VideoID,
+			"title":    room.VideoName,
+			"hls_path": room.VideoPath,
+			"is_live":  false,
+		}
+	}
+
+	// 如果正在直播，返回直播流信息
+	if room.Status == model.RoomStatusPlayingLive {
+		response["current_video"] = gin.H{
+			"video_id": "live",
+			"title":    "直播中",
+			"hls_path": room.LiveHLSPath, // HTTP-FLV 相对路径
+			"is_live":  true,
+		}
+	}
+
+	h.Success(c, response)
 }
 
 // RoomPlayVideo 播放指定视频（房主调用）
@@ -102,24 +123,24 @@ func (h *Handler) RoomPlayVideo(hub *websocket.Hub) gin.HandlerFunc {
 			return
 		}
 
-		// 查询视频 hls_url
-		videoURL := h.Cfg.R2PublicURL + "/videos/" + req.VideoID + "/index.m3u8"
+		// 构建视频相对路径
+		videoPath := "/videos/" + req.VideoID + "/index.m3u8"
 
 		// 更新房间状态
-		hub.GetRoomService().PlayVideo(roomID, req.VideoID, req.VideoName, videoURL)
+		hub.GetRoomService().PlayVideo(roomID, req.VideoID, req.VideoName, videoPath)
 
 		// 通过 WebSocket 广播 change_video 给房间所有人
 		data, _ := json.Marshal(map[string]interface{}{
 			"video_id":   req.VideoID,
 			"video_name": req.VideoName,
-			"video_path": videoURL,
+			"video_path": videoPath,
 		})
 		hub.BroadcastToRoom(roomID, "change_video", data, userID)
 
 		h.Success(c, gin.H{
 			"video_id":   req.VideoID,
 			"video_name": req.VideoName,
-			"video_url":  videoURL,
+			"video_path": videoPath,
 		})
 	}
 }

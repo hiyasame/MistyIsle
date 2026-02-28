@@ -73,10 +73,10 @@ func (h *Handler) SRSCallback(hub *websocket.Hub) gin.HandlerFunc {
 
 			// 使用 roomID 作为 SRS 流标识
 			hub.GetRoomService().StartLive(roomID, roomID)
-			// 广播直播开始
+			// 广播直播开始（使用 HTTP-FLV 相对路径）
 			data, _ := json.Marshal(map[string]interface{}{
 				"stream": roomID,
-				"url":    "/" + req.App + "/" + req.Stream + ".m3u8",
+				"path":   "/live/" + roomID + ".flv",
 			})
 			hub.BroadcastToRoom(roomID, "live_started", data, "system")
 

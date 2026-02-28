@@ -20,12 +20,12 @@ type Room struct {
 	// 点播相关
 	VideoID   string `json:"video_id"`   // 当前播放的视频ID
 	VideoName string `json:"video_name"` // 当前播放的视频名称
-	VideoURL  string `json:"video_url"`  // 当前播放的HLS地址
+	VideoPath string `json:"video_path"` // 当前播放的视频相对路径 (videos/{id}/index.m3u8)
 
 	// 直播相关
 	StreamKey     string `json:"stream_key,omitempty"`      // 推流密钥（仅房主可见）
 	StreamURL     string `json:"stream_url,omitempty"`      // 推流地址 rtmp://...
-	LiveHLSURL    string `json:"live_hls_url,omitempty"`    // 直播播放地址
+	LiveHLSPath   string `json:"live_hls_path,omitempty"`   // 直播相对路径 (/live/{roomId}.flv)
 	LiveStartedAt int64  `json:"live_started_at,omitempty"` // 直播开始时间戳
 }
 

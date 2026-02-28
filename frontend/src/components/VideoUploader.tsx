@@ -1,21 +1,25 @@
 import { useState, useRef } from 'react';
 import { videoApi } from '../services/api';
 
+interface VideoUploaderProps {
+  onUploadComplete?: (video: any) => void;
+}
+
 /**
  * 视频上传组件
  */
-export default function VideoUploader({ onUploadComplete }) {
+export default function VideoUploader({ onUploadComplete }: VideoUploaderProps) {
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
-  const [error, setError] = useState(null);
-  const fileInputRef = useRef(null);
+  const [error, setError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [formData, setFormData] = useState({
     title: '',
     description: ''
   });
 
-  const handleFileSelect = async (e) => {
-    const file = e.target.files[0];
+  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
     if (!file) return;
 
     // 验证文件类型
@@ -40,9 +44,8 @@ export default function VideoUploader({ onUploadComplete }) {
       console.log('Initializing upload...');
       const initRes = await videoApi.init({
         title: formData.title || file.name,
-        description: formData.description,
-        file_size: file.size,
-        file_ext: '.' + file.name.split('.').pop()
+        size: file.size,
+        mime_type: file.type
       });
 
       if (initRes.code !== 0) {
@@ -86,7 +89,7 @@ export default function VideoUploader({ onUploadComplete }) {
 
     } catch (err) {
       console.error('Upload failed:', err);
-      setError(err.message || '上传失败');
+      setError(err instanceof Error ? err.message : '上传失败');
     } finally {
       setUploading(false);
       setUploadProgress(0);

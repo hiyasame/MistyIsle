@@ -1,0 +1,54 @@
+# Git
+.git
+.gitignore
+.github
+
+# IDE
+.idea
+.vscode
+*.swp
+*.swo
+*~
+
+# 环境文件
+.env
+.env.*
+!.env.example
+!.env.production.example
+
+# 日志
+logs/
+*.log
+
+# 临时文件
+tmp/
+temp/
+__pycache__/
+*.pyc
+
+# 构建产物
+dist/
+node_modules/
+
+# Docker
+docker-compose*.yml
+Dockerfile*
+.dockerignore
+
+# 文档
+README.md
+DEPLOY.md
+*.md
+
+# 脚本
+*.sh
+
+# 数据文件
+hls/
+*.db
+*.sqlite
+
+# 测试
+test/
+*.test.go
+*_test.go

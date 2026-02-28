@@ -4,15 +4,16 @@ import { useWebSocket } from '../hooks/useWebSocket';
 import VideoUploader from '../components/VideoUploader';
 import VideoCard from '../components/VideoCard';
 import VideoPlayer from '../components/VideoPlayer';
+import { Video } from '../types';
 
 /**
  * 视频页面
  */
 export default function VideoPage() {
-  const [videos, setVideos] = useState([]);
-  const [selectedVideo, setSelectedVideo] = useState(null);
+  const [videos, setVideos] = useState<Video[]>([]);
+  const [selectedVideo, setSelectedVideo] = useState<Video | null>(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
+  const [error, setError] = useState<string | null>(null);
 
   // 假设用户ID为1（实际项目中从认证状态获取）
   const userId = '1';
@@ -29,7 +30,7 @@ export default function VideoPage() {
       }
     } catch (err) {
       console.error('Failed to load videos:', err);
-      setError(err.message);
+      setError(err instanceof Error ? err.message : 'Unknown error');
     } finally {
       setLoading(false);
     }
@@ -41,7 +42,7 @@ export default function VideoPage() {
   }, [loadVideos]);
 
   // 处理 WebSocket 消息
-  const handleWebSocketMessage = useCallback((data) => {
+  const handleWebSocketMessage = useCallback((data: any) => {
     console.log('WebSocket message:', data);
 
     // 视频状态更新
@@ -70,12 +71,12 @@ export default function VideoPage() {
 
       // 如果正在播放的视频更新了，也更新选中的视频
       if (selectedVideo && selectedVideo.video_id === videoData.video_id) {
-        setSelectedVideo(prev => ({
+        setSelectedVideo(prev => prev ? ({
           ...prev,
           status: videoData.status,
           progress: videoData.progress,
           hls_path: videoData.playlist_path || prev.hls_path
-        }));
+        }) : null);
       }
     }
   }, [selectedVideo]);
@@ -88,7 +89,7 @@ export default function VideoPage() {
   );
 
   // 处理上传完成
-  const handleUploadComplete = useCallback((videoData) => {
+  const handleUploadComplete = useCallback((videoData: any) => {
     console.log('Upload completed:', videoData);
 
     // 添加到列表顶部
@@ -106,7 +107,7 @@ export default function VideoPage() {
   }, []);
 
   // 选择视频播放
-  const handleVideoClick = useCallback((video) => {
+  const handleVideoClick = useCallback((video: Video) => {
     if (['m3u8_prepared', 'modal_upload', 'ready'].includes(video.status)) {
       setSelectedVideo(video);
     }

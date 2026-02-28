@@ -1,28 +1,32 @@
-import { useEffect, useRef, useState, forwardRef, useImperativeHandle } from 'react';
+import { useEffect, useRef, useState, forwardRef } from 'react';
 import Hls from 'hls.js';
 
 /**
  * 同步播放器组件
  * 支持 HLS 视频和直播流，支持同步控制
  */
-const SyncPlayer = forwardRef(({
+interface SyncPlayerProps {
+  hlsPath: string;
+  isHost?: boolean;
+  onHostAction?: (action: string, data: any) => void;
+  onReady?: () => void;
+  autoplay?: boolean;
+  controls?: boolean;
+}
+
+const SyncPlayer = forwardRef<HTMLVideoElement, SyncPlayerProps>(({
   hlsPath,
   isHost = false,
   onHostAction,
   onReady,
   autoplay = false,
   controls = true
-}, ref) => {
-  const videoRef = useRef(null);
-  const hlsRef = useRef(null);
+}, _ref) => {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const hlsRef = useRef<Hls | null>(null);
   const [isReady, setIsReady] = useState(false);
-  const [error, setError] = useState(null);
+  const [error, setError] = useState<string | null>(null);
   const actionFromRemoteRef = useRef(false); // 标记是否来自远程控制
-
-  // 处理相对路径，确保指向带端口的后端 (SRS) 地址
-  const actualHlsPath = hlsPath?.startsWith('/')
-    ? `${import.meta.env.VITE_SRS_BASE_URL || 'http://localhost:8080'}${hlsPath}`
-    : hlsPath;
 
   // 初始化 HLS
   useEffect(() => {
@@ -51,13 +55,13 @@ const SyncPlayer = forwardRef(({
         onReady?.();
 
         if (autoplay) {
-          video.play().catch(err => {
+          video.play().catch((err: Error) => {
             console.warn('Autoplay prevented:', err);
           });
         }
       });
 
-      hls.on(Hls.Events.ERROR, (event, data) => {
+      hls.on(Hls.Events.ERROR, (_event, data) => {
         console.error('HLS error:', data);
         if (data.fatal) {
           switch (data.type) {
@@ -77,18 +81,18 @@ const SyncPlayer = forwardRef(({
         }
       });
 
-      hls.loadSource(actualHlsPath);
+      hls.loadSource(hlsPath);
       hls.attachMedia(video);
     } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
       // Safari 原生支持 HLS
-      video.src = actualHlsPath;
+      video.src = hlsPath;
       video.addEventListener('loadedmetadata', () => {
         console.log('HLS loaded (native)');
         setIsReady(true);
         onReady?.();
 
         if (autoplay) {
-          video.play().catch(err => {
+          video.play().catch((err: Error) => {
             console.warn('Autoplay prevented:', err);
           });
         }
@@ -147,7 +151,7 @@ const SyncPlayer = forwardRef(({
   }, [isHost, isReady, onHostAction]);
 
   // 接收远程控制
-  const handleRemoteAction = (action, data) => {
+  const handleRemoteAction = (action: string, data: { time?: number }) => {
     if (!videoRef.current || !isReady) return;
 
     const video = videoRef.current;
@@ -158,7 +162,7 @@ const SyncPlayer = forwardRef(({
         if (data.time !== undefined && Math.abs(video.currentTime - data.time) > 1) {
           video.currentTime = data.time;
         }
-        video.play().catch(err => console.warn('Play failed:', err));
+        video.play().catch((err: Error) => console.warn('Play failed:', err));
         break;
 
       case 'pause':
@@ -182,7 +186,7 @@ const SyncPlayer = forwardRef(({
   // 暴露控制方法
   useEffect(() => {
     if (videoRef.current) {
-      videoRef.current.handleRemoteAction = handleRemoteAction;
+      (videoRef.current as any).handleRemoteAction = handleRemoteAction;
     }
   }, [isReady]);
 

@@ -1,24 +1,34 @@
 import { useEffect, useRef, useCallback, useState } from 'react';
 import { WS_BASE_URL } from '../utils/config';
 
+interface WebSocketOptions {
+  autoReconnect?: boolean;
+  reconnectInterval?: number;
+  maxReconnectDelay?: number;
+}
+
 /**
  * WebSocket Hook
- * @param {string} roomId - 房间ID（用户级通知可以用 user_${userId}）
- * @param {function} onMessage - 消息回调
- * @param {object} options - 配置选项
+ * @param roomId - 房间ID（用户级通知可以用 user_${userId}）
+ * @param onMessage - 消息回调
+ * @param options - 配置选项
  */
-export function useWebSocket(roomId, onMessage, options = {}) {
+export function useWebSocket(
+  roomId: string,
+  onMessage: (data: any) => void,
+  options: WebSocketOptions = {}
+) {
   const {
     autoReconnect = true,
     reconnectInterval = 3000,
     maxReconnectDelay = 30000
   } = options;
 
-  const wsRef = useRef(null);
-  const reconnectTimeoutRef = useRef(null);
+  const wsRef = useRef<WebSocket | null>(null);
+  const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const reconnectDelayRef = useRef(reconnectInterval);
   const [isConnected, setIsConnected] = useState(false);
-  const [error, setError] = useState(null);
+  const [error, setError] = useState<string | null>(null);
 
   const connect = useCallback(() => {
     if (!roomId) return;
@@ -36,15 +46,15 @@ export function useWebSocket(roomId, onMessage, options = {}) {
       ws.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data);
-          onMessage && onMessage(data);
+          onMessage(data);
         } catch (err) {
           console.error('Failed to parse WebSocket message:', err);
         }
       };
 
-      ws.onerror = (err) => {
-        console.error('WebSocket error:', err);
-        setError(err);
+      ws.onerror = () => {
+        console.error('WebSocket error');
+        setError('WebSocket connection error');
       };
 
       ws.onclose = () => {
@@ -69,7 +79,7 @@ export function useWebSocket(roomId, onMessage, options = {}) {
       wsRef.current = ws;
     } catch (err) {
       console.error('Failed to create WebSocket:', err);
-      setError(err);
+      setError('Failed to create WebSocket');
     }
   }, [roomId, onMessage, autoReconnect, reconnectInterval, maxReconnectDelay]);
 
@@ -85,7 +95,7 @@ export function useWebSocket(roomId, onMessage, options = {}) {
     }
   }, []);
 
-  const send = useCallback((data) => {
+  const send = useCallback((data: any) => {
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify(data));
     } else {

@@ -1,19 +1,25 @@
 import { VIDEO_STATUS_TEXT, VIDEO_STATUS_COLOR } from '../utils/config';
+import { Video, VideoStatus } from '../types';
+
+interface VideoCardProps {
+  video: Video;
+  onClick?: (video: Video) => void;
+}
 
 /**
  * 视频卡片组件
  */
-export default function VideoCard({ video, onClick }) {
+export default function VideoCard({ video, onClick }: VideoCardProps) {
   const canPlay = ['m3u8_prepared', 'modal_upload', 'ready'].includes(video.status);
-  const statusText = VIDEO_STATUS_TEXT[video.status] || video.status;
-  const statusColor = VIDEO_STATUS_COLOR[video.status] || '#9ca3af';
+  const statusText = VIDEO_STATUS_TEXT[video.status as VideoStatus] || video.status;
+  const statusColor = VIDEO_STATUS_COLOR[video.status as VideoStatus] || '#9ca3af';
 
-  const formatDate = (dateStr) => {
+  const formatDate = (dateStr: string) => {
     const date = new Date(dateStr);
     return date.toLocaleString('zh-CN');
   };
 
-  const formatDuration = (seconds) => {
+  const formatDuration = (seconds: number) => {
     if (!seconds) return '--:--';
     const mins = Math.floor(seconds / 60);
     const secs = Math.floor(seconds % 60);
@@ -29,8 +35,7 @@ export default function VideoCard({ video, onClick }) {
         padding: '1rem',
         marginBottom: '1rem',
         cursor: canPlay ? 'pointer' : 'default',
-        transition: 'all 0.2s',
-        ':hover': canPlay ? { boxShadow: '0 4px 6px rgba(0,0,0,0.1)' } : {}
+        transition: 'all 0.2s'
       }}
       onClick={() => canPlay && onClick && onClick(video)}
     >
@@ -39,7 +44,17 @@ export default function VideoCard({ video, onClick }) {
           {video.title}
         </h3>
         {video.description && (
-          <p style={{ margin: '0.5rem 0 0', color: '#6b7280', fontSize: '0.875rem' }}>
+          <p style={{
+            margin: '0.5rem 0 0',
+            color: '#6b7280',
+            fontSize: '0.875rem',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            display: '-webkit-box',
+            WebkitLineClamp: 2,
+            WebkitBoxOrient: 'vertical',
+            lineHeight: '1.4'
+          }}>
             {video.description}
           </p>
         )}

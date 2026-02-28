@@ -2,9 +2,11 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { roomApi, videoApi } from '../services/api';
 import { useRoomWebSocket } from '../hooks/useRoomWebSocket';
-import { getPlayUrl } from '../utils/config';
+import { getPlayUrl, getLiveUrl } from '../utils/config';
 import SyncPlayer from '../components/SyncPlayer';
+import FlvPlayer from '../components/FlvPlayer';
 import { useAuth } from '../contexts/AuthContext';
+import {Room, Video, RoomUser, RoomMessage} from '../types';
 
 /**
  * 房间页面 - 同步观影/直播核心页面
@@ -15,13 +17,13 @@ export default function RoomPage() {
   const playerRef = useRef(null);
 
   const { user } = useAuth();
-  const [room, setRoom] = useState(null);
-  const [currentVideo, setCurrentVideo] = useState(null);
-  const [videos, setVideos] = useState([]);
-  const [users, setUsers] = useState([]);
+  const [room, setRoom] = useState<Room | null>(null);
+  const [currentVideo, setCurrentVideo] = useState<Video | null>(null);
+  const [videos, setVideos] = useState<Video[]>([]);
+  const [users, setUsers] = useState<RoomUser[]>([]);
   const [isHost, setIsHost] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
+  const [error, setError] = useState<string | null>(null);
   const [showVideoLibrary, setShowVideoLibrary] = useState(false);
 
   const userId = user?.user_id || '';
@@ -30,10 +32,10 @@ export default function RoomPage() {
   const loadRoom = useCallback(async () => {
     try {
       setLoading(true);
-      const res = await roomApi.get(roomId);
+      const res = await roomApi.get(roomId || '');
       if (res.code === 0) {
         setRoom(res.data);
-        setCurrentVideo(res.data.current_video);
+        setCurrentVideo(res.data.current_video || null);
         setIsHost(res.data.host_id === userId);
         // 用户列表由 WebSocket 连接后更新，初始为空
         setUsers([]);
@@ -42,7 +44,7 @@ export default function RoomPage() {
       }
     } catch (err) {
       console.error('Failed to load room:', err);
-      setError(err.message);
+      setError(err instanceof Error ? err.message : 'Unknown error');
     } finally {
       setLoading(false);
     }
@@ -70,7 +72,7 @@ export default function RoomPage() {
   }, [loadRoom, loadVideos]);
 
   // 处理 WebSocket 消息
-  const handleWebSocketMessage = useCallback((data) => {
+  const handleWebSocketMessage = useCallback((data: RoomMessage) => {
     console.log('Room WebSocket message:', data);
 
     switch (data.action) {
@@ -88,24 +90,25 @@ export default function RoomPage() {
 
       case 'join':
         // 用户加入（包括自己）
-        if (data.data?.user_id) {
+        if (data.data && 'user_id' in data.data) {
+          const joinData = data.data as { user_id: string; username?: string; is_host?: boolean };
           // 如果是自己加入且后端认定为房主，则更新本地 isHost 状态
-          if (data.data.user_id === userId && data.data.is_host) {
+          if (joinData.user_id === userId && joinData.is_host) {
             setIsHost(true);
           }
 
           setUsers(prev => {
             // 避免重复添加
-            if (prev.find(u => u.user_id === data.data.user_id)) {
+            if (prev.find(u => u.user_id === joinData.user_id)) {
               // 已经是用户列表里的人了，我们也可以考虑更新TA的信息
               return prev.map(u =>
-                u.user_id === data.data.user_id ? { ...u, is_host: data.data.is_host } : u
+                u.user_id === joinData.user_id ? { ...u, is_host: joinData.is_host || false } : u
               );
             }
             return [...prev, {
-              user_id: data.data.user_id,
-              username: data.data.user_id === userId ? user?.username : (data.data.username || `用户${data.data.user_id}`),
-              is_host: data.data.is_host
+              user_id: joinData.user_id,
+              username: joinData.user_id === userId ? (user?.username || joinData.user_id) : (joinData.username || `用户${joinData.user_id}`),
+              is_host: joinData.is_host || false
             }];
           });
         }
@@ -113,8 +116,9 @@ export default function RoomPage() {
 
       case 'leave':
         // 用户离开
-        if (data.data?.user_id) {
-          setUsers(prev => prev.filter(u => u.user_id !== data.data.user_id));
+        if (data.data && 'user_id' in data.data) {
+          const leaveData = data.data as { user_id: string };
+          setUsers(prev => prev.filter(u => u.user_id !== leaveData.user_id));
         }
         break;
 
@@ -122,36 +126,42 @@ export default function RoomPage() {
       case 'pause':
       case 'seek':
         // 同步播放控制
-        if (playerRef.current?.handleRemoteAction) {
-          playerRef.current.handleRemoteAction(data.action, data.data || {});
+        if (playerRef.current && 'handleRemoteAction' in playerRef.current) {
+          const playbackData = (data.data && 'time' in data.data) ? data.data : { time: 0 };
+          (playerRef.current as any).handleRemoteAction(data.action, playbackData);
         }
         break;
 
       case 'change_video':
         // 切换视频
-        if (data.data?.video) {
+        if (data.data && 'video' in data.data && data.data.video) {
           setCurrentVideo(data.data.video);
         }
         break;
 
       case 'host_transfer':
         // 房主变更
-        if (data.data?.new_host_id) {
-          setIsHost(data.data.new_host_id === userId);
+        if (data.data && 'new_host_id' in data.data) {
+          const transferData = data.data;
+          setIsHost(transferData.new_host_id === userId);
           setUsers(prev => prev.map(u => ({
             ...u,
-            is_host: u.user_id === data.data.new_host_id
+            is_host: u.user_id === transferData.new_host_id
           })));
         }
         break;
 
       case 'live_started':
         // 直播开始
-        if (data.data?.url) {
+        if (data.data && 'path' in data.data && data.data.path) {
           setCurrentVideo({
             video_id: 'live',
             title: '直播中',
-            hls_path: data.data.url,
+            hls_path: data.data.path as string,
+            status: 'ready',
+            progress: 100,
+            duration: 0,
+            created_at: new Date().toISOString(),
             is_live: true
           });
         }
@@ -169,43 +179,43 @@ export default function RoomPage() {
 
   // 连接 WebSocket
   const { isConnected, sendMessage } = useRoomWebSocket(
-    roomId,
+    roomId || '',
     handleWebSocketMessage,
     { autoReconnect: true }
   );
 
   // 房主操作：播放控制
-  const handleHostAction = useCallback((action, data) => {
+  const handleHostAction = useCallback((action: string, data: { time?: number }) => {
     if (!isHost) return;
     sendMessage(action, data);
   }, [isHost, sendMessage]);
 
   // 房主操作：切换视频
-  const handleChangeVideo = useCallback(async (video) => {
+  const handleChangeVideo = useCallback(async (video: Video) => {
     if (!isHost) return;
 
     try {
-      await roomApi.playVideo(roomId, video.video_id);
+      await roomApi.playVideo(roomId || '', video.video_id);
       setCurrentVideo(video);
       setShowVideoLibrary(false);
     } catch (err) {
       console.error('Failed to play video:', err);
-      alert(`切换视频失败: ${err.message}`);
+      alert(`切换视频失败: ${err instanceof Error ? err.message : 'Unknown error'}`);
     }
   }, [isHost, roomId]);
 
   // 房主操作：移交权限
-  const handleTransferHost = useCallback(async (targetUserId) => {
+  const handleTransferHost = useCallback(async (targetUserId: string) => {
     if (!isHost || targetUserId === userId) return;
 
     if (!confirm(`确定要将房主权限移交给该用户吗？`)) return;
 
     try {
-      await roomApi.transferHost(roomId, targetUserId);
+      await roomApi.transferHost(roomId || '', targetUserId);
       setIsHost(false);
     } catch (err) {
       console.error('Failed to transfer host:', err);
-      alert(`移交权限失败: ${err.message}`);
+      alert(`移交权限失败: ${err instanceof Error ? err.message : 'Unknown error'}`);
     }
   }, [isHost, userId, roomId]);
 
@@ -328,14 +338,24 @@ export default function RoomPage() {
                 </h2>
               </div>
               <div style={{ flex: 1, backgroundColor: '#000', borderRadius: '12px', overflow: 'hidden' }}>
-                <SyncPlayer
-                  ref={playerRef}
-                  hlsPath={currentVideo.is_live ? currentVideo.hls_path : getPlayUrl(currentVideo.hls_path)}
-                  isHost={isHost}
-                  onHostAction={handleHostAction}
-                  autoplay={true}
-                  controls={true}
-                />
+                {currentVideo.is_live ? (
+                  // 直播流使用 FLV 播放器
+                  <FlvPlayer
+                    flvPath={getLiveUrl(currentVideo.hls_path) || ''}
+                    autoplay={true}
+                    controls={true}
+                  />
+                ) : (
+                  // VOD 视频使用 HLS 同步播放器
+                  <SyncPlayer
+                    ref={playerRef}
+                    hlsPath={getPlayUrl(currentVideo.hls_path) || ''}
+                    isHost={isHost}
+                    onHostAction={handleHostAction}
+                    autoplay={true}
+                    controls={true}
+                  />
+                )}
               </div>
             </>
           ) : (

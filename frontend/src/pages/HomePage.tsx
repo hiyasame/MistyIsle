@@ -321,13 +321,29 @@ function RoomCard({ room, onJoin }: { room: Room; onJoin: (roomId: string) => vo
     >
       <h3 style={{
         fontSize: '1.25rem',
-        marginBottom: '0.75rem',
+        marginBottom: '0.5rem',
         overflow: 'hidden',
         textOverflow: 'ellipsis',
         whiteSpace: 'nowrap'
       }}>
         {room.name}
       </h3>
+
+      {room.desc && (
+        <p style={{
+          fontSize: '0.875rem',
+          color: '#94a3b8',
+          marginBottom: '0.75rem',
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          display: '-webkit-box',
+          WebkitLineClamp: 2,
+          WebkitBoxOrient: 'vertical',
+          lineHeight: '1.4'
+        }}>
+          {room.desc}
+        </p>
+      )}
 
       <div style={{
         display: 'flex',

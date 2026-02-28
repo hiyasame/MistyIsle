@@ -12,7 +12,8 @@
       "Bash(sudo tar:*)",
       "Bash(go build:*)",
       "WebSearch",
-      "WebFetch(domain:developers.cloudflare.com)"
+      "WebFetch(domain:developers.cloudflare.com)",
+      "Bash(npx tsc:*)"
     ]
   }
 }

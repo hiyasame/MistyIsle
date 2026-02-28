@@ -2,17 +2,23 @@ import { useEffect, useRef } from 'react';
 import Hls from 'hls.js';
 import { getPlayUrl } from '../utils/config';
 
+interface VideoPlayerProps {
+  hlsPath: string;
+  poster?: string;
+  autoplay?: boolean;
+  controls?: boolean;
+}
+
 /**
  * HLS 视频播放器
  */
-export default function VideoPlayer({ hlsPath, poster, autoplay = false, controls = true }) {
-  const videoRef = useRef(null);
-  const hlsRef = useRef(null);
+export default function VideoPlayer({ hlsPath, poster, autoplay = false, controls = true }: VideoPlayerProps) {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const hlsRef = useRef<Hls | null>(null);
 
   useEffect(() => {
     if (!hlsPath || !videoRef.current) return;
 
-    const playUrl = getPlayUrl(hlsPath);
     const video = videoRef.current;
 
     // 检查浏览器是否支持 HLS.js
@@ -23,19 +29,19 @@ export default function VideoPlayer({ hlsPath, poster, autoplay = false, control
         backBufferLength: 90
       });
 
-      hls.loadSource(playUrl);
+      hls.loadSource(hlsPath);
       hls.attachMedia(video);
 
       hls.on(Hls.Events.MANIFEST_PARSED, () => {
         console.log('HLS manifest loaded');
         if (autoplay) {
-          video.play().catch(err => {
+          video.play().catch((err: Error) => {
             console.warn('Autoplay failed:', err);
           });
         }
       });
 
-      hls.on(Hls.Events.ERROR, (event, data) => {
+      hls.on(Hls.Events.ERROR, (_event, data) => {
         console.error('HLS error:', data);
         if (data.fatal) {
           switch (data.type) {
@@ -65,9 +71,9 @@ export default function VideoPlayer({ hlsPath, poster, autoplay = false, control
       };
     } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
       // Safari 原生支持 HLS
-      video.src = playUrl;
+      video.src = hlsPath;
       if (autoplay) {
-        video.play().catch(err => {
+        video.play().catch((err: Error) => {
           console.warn('Autoplay failed:', err);
         });
       }

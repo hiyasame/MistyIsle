@@ -67,6 +67,15 @@ func (h *Hub) Run() {
 	for {
 		select {
 		case client := <-h.register:
+			// 通过 RoomService 验证房间是否存在
+			isHost, exists := h.roomService.JoinRoom(client.roomID, client.userID)
+			if !exists {
+				// 房间不存在，拒绝连接
+				log.Printf("Client %s tried to join non-existent room %s", client.userID, client.roomID)
+				close(client.send)
+				continue
+			}
+
 			h.mu.Lock()
 			// 注册到房间
 			if h.rooms[client.roomID] == nil {
@@ -81,19 +90,17 @@ func (h *Hub) Run() {
 			h.users[client.userID][client] = struct{}{}
 			h.mu.Unlock()
 
-			// 通过 RoomService 管理房间状态
-			isHost := h.roomService.JoinRoom(client.roomID, client.userID)
 			client.isHost = isHost
 			log.Printf("Client %s joined room %s (host=%v)", client.userID, client.roomID, isHost)
 
-			// 获取房间最新信息（可能被 fallback 重新生成了推流密钥）
+			// 获取房间信息
 			var streamKey, streamURL string
 			if room, ok := h.roomService.GetRoom(client.roomID); ok {
 				streamKey = room.StreamKey
 				streamURL = room.StreamURL
 			}
 
-			// 广播用户加入（如果加入的是房主，连同最新的推流密钥一起发给前端）
+			// 广播用户加入（如果加入的是房主，连同推流密钥一起发给前端）
 			joinPayload := map[string]interface{}{
 				"user_id":  client.userID,
 				"username": client.username,

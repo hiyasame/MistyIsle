@@ -37,14 +37,14 @@ func (rm *RoomService) CreateRoom(opts model.RoomOptions, hostID string, srsBase
 	streamKey := rm.generateStreamKey()
 
 	room := &model.Room{
-		ID:         roomID,
-		Name:       opts.Name,
-		Desc:       opts.Desc,
-		HostID:     hostID,
-		Status:     model.RoomStatusIdle,
-		StreamKey:  streamKey,
-		StreamURL:  srsBaseURL + "/live/" + roomID + "?key=" + streamKey,
-		LiveHLSURL: "/live/" + roomID + ".m3u8",
+		ID:          roomID,
+		Name:        opts.Name,
+		Desc:        opts.Desc,
+		HostID:      hostID,
+		Status:      model.RoomStatusIdle,
+		StreamKey:   streamKey,
+		StreamURL:   srsBaseURL + "/live/" + roomID + "?key=" + streamKey,
+		LiveHLSPath: "/live/" + roomID + ".flv", // HTTP-FLV 相对路径
 	}
 
 	rm.rooms[roomID] = room
@@ -183,7 +183,7 @@ func (rm *RoomService) ListRoomWithUsers() []RoomInfo {
 }
 
 // PlayVideo 播放视频（vod模式）
-func (rm *RoomService) PlayVideo(roomID, videoID, videoName, videoURL string) bool {
+func (rm *RoomService) PlayVideo(roomID, videoID, videoName, videoPath string) bool {
 	rm.mu.Lock()
 	defer rm.mu.Unlock()
 
@@ -195,7 +195,7 @@ func (rm *RoomService) PlayVideo(roomID, videoID, videoName, videoURL string) bo
 	room.Status = model.RoomStatusPlayingVOD
 	room.VideoID = videoID
 	room.VideoName = videoName
-	room.VideoURL = videoURL
+	room.VideoPath = videoPath
 	return true
 }
 
@@ -228,7 +228,7 @@ func (rm *RoomService) EndLive(roomID string) bool {
 	room.Status = model.RoomStatusIdle
 	room.VideoID = ""
 	room.VideoName = ""
-	room.VideoURL = ""
+	room.VideoPath = ""
 	return true
 }
 
@@ -246,7 +246,7 @@ func (rm *RoomService) VideoEnded(roomID string) (nextVideoID string, hasNext bo
 	room.Status = model.RoomStatusIdle
 	room.VideoID = ""
 	room.VideoName = ""
-	room.VideoURL = ""
+	room.VideoPath = ""
 	return "", false
 }
 
@@ -259,24 +259,16 @@ func (rm *RoomService) DeleteRoom(id string) {
 }
 
 // JoinRoom 用户加入房间
-func (rm *RoomService) JoinRoom(roomID, userID string) bool {
+// 返回：(isHost, exists) - 是否是房主，房间是否存在
+func (rm *RoomService) JoinRoom(roomID, userID string) (bool, bool) {
 	rm.mu.Lock()
 	defer rm.mu.Unlock()
 
 	room, ok := rm.rooms[roomID]
 	if !ok {
-		// 房间不存在，创建新房间（第一个加入的是房主）
-		streamKey := rm.generateStreamKey()
-		room = &model.Room{
-			ID:        roomID,
-			Status:    model.RoomStatusIdle,
-			HostID:    userID,
-			StreamKey: streamKey,
-		}
-		rm.rooms[roomID] = room
-		rm.roomUsers[roomID] = make(map[string]int)
-
-		log.Printf("[RoomService.JoinRoom] Fallback created room %s with NEW streamKey %s for user %s", roomID, streamKey, userID)
+		// 房间不存在，直接返回
+		log.Printf("[RoomService.JoinRoom] Room %s not found", roomID)
+		return false, false
 	}
 
 	if rm.roomUsers[roomID] == nil {
@@ -284,7 +276,7 @@ func (rm *RoomService) JoinRoom(roomID, userID string) bool {
 	}
 
 	// 如果房间存在但目前没有任何人（比如所有人都离开了），
-	// 根据新需求：后续第一个加入房间的人自动成为房主
+	// 后续第一个加入房间的人自动成为房主
 	if len(rm.roomUsers[roomID]) == 0 {
 		log.Printf("Room %s is empty, setting %s as new host", roomID, userID)
 		room.HostID = userID
@@ -298,7 +290,7 @@ func (rm *RoomService) JoinRoom(roomID, userID string) bool {
 	}
 	log.Printf("User %s joined room %s (connection #%d), total connections: %d, unique users: %d, is_host: %v",
 		userID, roomID, rm.roomUsers[roomID][userID], totalConnections, len(rm.roomUsers[roomID]), room.HostID == userID)
-	return room.HostID == userID
+	return room.HostID == userID, true
 }
 
 // LeaveRoom 用户离开房间
@@ -326,12 +318,16 @@ func (rm *RoomService) LeaveRoom(roomID, userID string) (isEmpty bool, newHostID
 
 	// 房间空了
 	if len(rm.roomUsers[roomID]) == 0 {
-		log.Printf("Room %s is empty (keeping it alive)", roomID)
-		// 回到 idle 状态
-		room.Status = model.RoomStatusIdle
-		room.VideoID = ""
-		room.VideoName = ""
-		room.VideoURL = ""
+		log.Printf("Room %s is empty (keeping status: %s)", roomID, room.Status)
+		// 不重置房间状态！如果正在直播，保持 playing_live 状态
+		// 这样新用户进入时可以看到直播
+		// 只有 playing_vod 状态才回到 idle（因为 VOD 播放进度无法同步）
+		if room.Status == model.RoomStatusPlayingVOD {
+			room.Status = model.RoomStatusIdle
+			room.VideoID = ""
+			room.VideoName = ""
+			room.VideoPath = ""
+		}
 
 		return true, ""
 	}

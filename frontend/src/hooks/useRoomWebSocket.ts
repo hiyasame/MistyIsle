@@ -1,11 +1,22 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { WS_BASE_URL } from '../utils/config';
+import {RoomMessage} from "../types";
+
+interface WebSocketOptions {
+  autoReconnect?: boolean;
+  reconnectInterval?: number;
+  maxReconnectAttempts?: number;
+}
 
 /**
  * 房间 WebSocket Hook
  * 用于房间内的实时通信（同步播放、用户进出、直播状态等）
  */
-export function useRoomWebSocket(roomId, onMessage, options = {}) {
+export function useRoomWebSocket(
+  roomId: string,
+  onMessage: (message: RoomMessage) => void,
+  options: WebSocketOptions = {}
+) {
   const {
     autoReconnect = true,
     reconnectInterval = 3000,
@@ -13,10 +24,10 @@ export function useRoomWebSocket(roomId, onMessage, options = {}) {
   } = options;
 
   const [isConnected, setIsConnected] = useState(false);
-  const [error, setError] = useState(null);
-  const wsRef = useRef(null);
+  const [error, setError] = useState<string | null>(null);
+  const wsRef = useRef<WebSocket | null>(null);
   const reconnectCountRef = useRef(0);
-  const reconnectTimerRef = useRef(null);
+  const reconnectTimerRef = useRef<NodeJS.Timeout | null>(null);
   const mountedRef = useRef(true);
   const isDisconnectingRef = useRef(false); // 标记正在主动断开
   const onMessageRef = useRef(onMessage);
@@ -27,7 +38,7 @@ export function useRoomWebSocket(roomId, onMessage, options = {}) {
   }, [onMessage]);
 
   // 发送消息
-  const sendMessage = useCallback((action, data) => {
+  const sendMessage = useCallback((action: string, data?: any) => {
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
       const message = {
         room_id: roomId,
@@ -78,8 +89,8 @@ export function useRoomWebSocket(roomId, onMessage, options = {}) {
         }
       };
 
-      ws.onerror = (event) => {
-        console.error('WebSocket error:', event);
+      ws.onerror = () => {
+        console.error('WebSocket error');
         setError('WebSocket connection error');
       };
 
@@ -109,7 +120,7 @@ export function useRoomWebSocket(roomId, onMessage, options = {}) {
       };
     } catch (err) {
       console.error('Failed to create WebSocket:', err);
-      setError(err.message);
+      setError(err instanceof Error ? err.message : 'Unknown error');
     }
   }, [roomId, autoReconnect, reconnectInterval, maxReconnectAttempts]);
 
