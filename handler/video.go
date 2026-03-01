@@ -215,7 +215,7 @@ func (h *Handler) VideoProcess(c *gin.Context) {
 	modalClient := utils.NewModalClient(h.Cfg.ModalEndpoint, h.Cfg.ModalToken)
 
 	// 构建 webhook URL（用于接收 Modal 回调）
-	webhookURL := fmt.Sprintf("%s/video/webhook", getBaseURL(c, h.Cfg))
+	webhookURL := fmt.Sprintf("%s/api/v1/video/webhook", getBaseURL(c, h.Cfg))
 
 	// 触发 Modal 处理
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
