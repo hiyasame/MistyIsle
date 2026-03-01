@@ -24,9 +24,6 @@ RUN npm run build
 # Nginx 镜像用于服务静态文件
 FROM nginx:alpine
 
-# 删除默认的 nginx 配置
-RUN rm /etc/nginx/conf.d/default.conf
-
 # 复制构建好的静态文件
 COPY --from=builder /app/dist /usr/share/nginx/html
 

@@ -4,7 +4,7 @@ import { videoApi } from '../services/api';
 import { useWebSocket } from '../hooks/useWebSocket';
 import { useAuth } from '../contexts/AuthContext';
 import { Video, VideoStatus } from '../types';
-import { API_BASE_URL, VIDEO_STATUS_TEXT, VIDEO_STATUS_COLOR, getPlayUrl } from '../utils/config';
+import { VIDEO_STATUS_TEXT, VIDEO_STATUS_COLOR, getPlayUrl } from '../utils/config';
 import VideoPlayer from '../components/VideoPlayer';
 
 /**
@@ -306,6 +306,12 @@ export default function VideoPage() {
               🔄
             </button>
           </div>
+
+          {error && (
+            <div style={{ padding: '1rem', backgroundColor: '#ef444420', color: '#ef4444', borderRadius: '12px', border: '1px solid #ef444440', fontSize: '0.9rem' }}>
+              ⚠️ {error}
+            </div>
+          )}
 
           {loading && videos.length === 0 ? (
             <div style={{ display: 'flex', justifyContent: 'center', padding: '5rem' }}>加载中...</div>

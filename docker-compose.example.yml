@@ -1,21 +1,26 @@
 version: '3.8'
 
 services:
-  # Nginx 网关
-  nginx:
-    image: nginx:alpine
-    container_name: misty-isle-gateway
+  # 整合了 Nginx 网关的前端服务（SPA + API Proxy）
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+      args:
+        # ==================== 前端构建环境变量 ====================
+        - VITE_API_BASE_URL=/api/v1
+        - VITE_WS_BASE_URL=wss://yourdomain.com/api/v1
+        - VITE_SRS_BASE_URL=/srs
+        - VITE_CDN_BASE_URL=https://cdn.yourdomain.com
+    container_name: misty-isle-frontend
     ports:
       - "80:80"
-      - "443:443"  # 如果需要 HTTPS
-    volumes:
-      - ./conf/nginx.prod.conf:/etc/nginx/conf.d/default.conf:ro
-      # 如果需要 HTTPS，挂载证书
-      # - ./ssl:/etc/nginx/ssl:ro
+      - "443:443"
     depends_on:
       - backend
-      - frontend
       - srs
+    volumes:
+      - ./conf/nginx.prod.conf:/etc/nginx/conf.d/default.conf:ro
     networks:
       - misty-isle-network
     restart: unless-stopped
@@ -73,22 +78,6 @@ services:
     depends_on:
       - srs
 
-  # 前端服务
-  frontend:
-    build:
-      context: .
-      dockerfile: frontend/Dockerfile
-      args:
-        # ==================== 前端构建环境变量 ====================
-        - VITE_API_BASE_URL=/api/v1
-        - VITE_WS_BASE_URL=wss://yourdomain.com/api/v1
-        - VITE_SRS_BASE_URL=/srs
-        - VITE_CDN_BASE_URL=https://cdn.yourdomain.com
-    container_name: misty-isle-frontend
-    networks:
-      - misty-isle-network
-    restart: unless-stopped
-
   # SRS 直播服务器
   srs:
     image: ossrs/srs:6
@@ -99,8 +88,8 @@ services:
       # WebRTC 候选地址（改为你的服务器公网 IP）
       - CANDIDATE=0.0.0.0
     ports:
-      - "1935:1935"      # RTMP
-      - "8000:8000/udp"  # WebRTC
+      - "1935:1935" # RTMP
+      - "8000:8000/udp" # WebRTC
       - "10080:10080/udp" # SRT
     networks:
       - misty-isle-network
