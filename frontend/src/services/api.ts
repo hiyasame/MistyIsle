@@ -105,7 +105,7 @@ export const userApi = {
 // 视频相关 API
 export const videoApi = {
   // 初始化上传
-  async init(data: { title: string; size: number; mime_type: string }): Promise<ApiResponse<any>> {
+  async init(data: { title: string; file_size: number; file_ext: string; description?: string }): Promise<ApiResponse<any>> {
     return request('/video/init', {
       method: 'POST',
       body: JSON.stringify(data)

@@ -43,7 +43,7 @@ func (rm *RoomService) CreateRoom(opts model.RoomOptions, hostID string, srsBase
 		HostID:      hostID,
 		Status:      model.RoomStatusIdle,
 		StreamKey:   streamKey,
-		StreamURL:   srsBaseURL + "/live/" + roomID + "?key=" + streamKey,
+		StreamURL:   srsBaseURL + "/live?key=" + streamKey,
 		LiveHLSPath: "/live/" + roomID + ".flv", // HTTP-FLV 相对路径
 	}
 

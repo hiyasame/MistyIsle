@@ -21,10 +21,16 @@ const FlvPlayer = ({ flvPath, autoplay = true, controls = true }: FlvPlayerProps
     if (!flvPath || !videoRef.current) return;
 
     const video = videoRef.current;
+    setIsReady(false);
+    setError(null);
 
     // 清理旧实例
     if (flvPlayerRef.current) {
-      flvPlayerRef.current.destroy();
+      try {
+        flvPlayerRef.current.destroy();
+      } catch (e) {
+        console.error('Error destroying flv player:', e);
+      }
       flvPlayerRef.current = null;
     }
 
@@ -49,13 +55,10 @@ const FlvPlayer = ({ flvPath, autoplay = true, controls = true }: FlvPlayerProps
 
       flvPlayerRef.current = flvPlayer;
       flvPlayer.attachMediaElement(video);
+      flvPlayer.load();
 
-      flvPlayer.on(flvjs.Events.LOADING_COMPLETE, () => {
-        console.log('FLV loading complete');
-      });
-
-      flvPlayer.on('metadata_arrived', () => {
-        console.log('FLV metadata loaded');
+      flvPlayer.on(flvjs.Events.METADATA_ARRIVED, () => {
+        console.log('FLV metadata arrived');
         setIsReady(true);
         if (autoplay) {
           video.play().catch((err: Error) => {
@@ -64,85 +67,116 @@ const FlvPlayer = ({ flvPath, autoplay = true, controls = true }: FlvPlayerProps
         }
       });
 
-      flvPlayer.on('error', (errorType: string, errorDetail: string, errorInfo: any) => {
+      flvPlayer.on(flvjs.Events.ERROR, (errorType: string, errorDetail: string, errorInfo: any) => {
         console.error('FLV error:', errorType, errorDetail, errorInfo);
-        if (errorType === 'NetworkError') {
-          setError('网络错误，正在尝试重连...');
-          // 尝试重新加载
-          setTimeout(() => {
-            if (flvPlayerRef.current) {
-              flvPlayerRef.current.unload();
-              flvPlayerRef.current.load();
-            }
-          }, 2000);
-        } else if (errorType === 'MediaError') {
-          setError('媒体错误');
+        if (errorType === flvjs.ErrorTypes.NETWORK_ERROR) {
+          setError('网络错误，请确保直播已开始且 SRS 服务正常');
         } else {
-          setError('播放器错误');
+          setError(`播放错误: ${errorDetail}`);
         }
       });
 
-      flvPlayer.load();
+      // 兜底：如果 metadata_arrived 没触发但已经可以播放了
+      video.oncanplay = () => {
+        if (!isReady) setIsReady(true);
+      };
+
     } else {
       setError('浏览器不支持 FLV 播放');
     }
 
     return () => {
       if (flvPlayerRef.current) {
-        flvPlayerRef.current.pause();
-        flvPlayerRef.current.unload();
-        flvPlayerRef.current.detachMediaElement();
-        flvPlayerRef.current.destroy();
+        try {
+          flvPlayerRef.current.destroy();
+        } catch (e) {
+          // ignore
+        }
         flvPlayerRef.current = null;
       }
     };
   }, [flvPath, autoplay]);
 
-  if (error) {
-    return (
-      <div
-        style={{
-          width: '100%',
-          aspectRatio: '16/9',
-          backgroundColor: '#1f2937',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          color: '#ef4444',
-          borderRadius: '8px',
-        }}
-      >
-        <div>
-          <p style={{ fontSize: '1.125rem', marginBottom: '0.5rem' }}>播放器错误</p>
-          <p style={{ fontSize: '0.875rem', opacity: 0.8 }}>{error}</p>
-        </div>
-      </div>
-    );
-  }
-
   return (
-    <div style={{ width: '100%', backgroundColor: '#000', borderRadius: '8px', overflow: 'hidden' }}>
+    <div
+      style={{
+        position: 'relative',
+        width: '100%',
+        aspectRatio: '16/9',
+        backgroundColor: '#000',
+        borderRadius: '12px',
+        overflow: 'hidden',
+        boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05)'
+      }}
+    >
       <video
         ref={videoRef}
         controls={controls}
+        muted={autoplay}
+        playsInline
         style={{
+          position: 'absolute',
+          top: 0,
+          left: 0,
           width: '100%',
           height: '100%',
-          display: 'block',
+          objectFit: 'contain', // 保持比例并居中
         }}
       />
-      {!isReady && (
+
+      {!isReady && !error && (
         <div
           style={{
             position: 'absolute',
-            top: '50%',
-            left: '50%',
-            transform: 'translate(-50%, -50%)',
-            color: 'white',
-            fontSize: '1rem',
+            inset: 0,
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            justifyContent: 'center',
+            backgroundColor: 'rgba(17, 24, 39, 0.8)',
+            color: '#fff',
+            zIndex: 10,
+            backdropFilter: 'blur(4px)',
           }}
         >
-          连接直播流中...
+          <div style={{
+            width: '48px',
+            height: '48px',
+            border: '3px solid rgba(255,255,255,0.1)',
+            borderTop: '3px solid #3b82f6',
+            borderRadius: '50%',
+            animation: 'flv-spin 0.8s linear infinite',
+            marginBottom: '1rem'
+          }} />
+          <p style={{ fontSize: '0.875rem', fontWeight: 500, letterSpacing: '0.025em' }}>正在连接直播源...</p>
+          <style>{`
+            @keyframes flv-spin {
+              0% { transform: rotate(0deg); }
+              100% { transform: rotate(360deg); }
+            }
+          `}</style>
+        </div>
+      )}
+
+      {error && (
+        <div
+          style={{
+            position: 'absolute',
+            inset: 0,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            backgroundColor: '#111827',
+            color: '#f87171',
+            zIndex: 20,
+            padding: '2rem',
+            textAlign: 'center'
+          }}
+        >
+          <div>
+            <div style={{ fontSize: '1.25rem', fontWeight: 'bold', marginBottom: '0.5rem' }}>无法播放</div>
+            <p style={{ fontSize: '0.875rem', color: '#9ca3af' }}>{error}</p>
+          </div>
         </div>
       )}
     </div>

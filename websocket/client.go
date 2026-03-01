@@ -37,12 +37,22 @@ type Client struct {
 	send     chan []byte
 	roomID   string
 	userID   string
+	avatar   string
 	username string
 	isHost   bool // 是否是房主
 }
 
 func ServeWs(hub *Hub, c *gin.Context, database *db.DB, conf *cfg.Config) {
 	roomID := c.Param("roomId")
+
+	// 提前验证房间是否存在（或者是用户级通知连接）
+	isUserConn := len(roomID) > 5 && roomID[:5] == "user_"
+	if !isUserConn {
+		if _, ok := hub.roomService.GetRoom(roomID); !ok {
+			c.JSON(http.StatusNotFound, gin.H{"error": "room not found"})
+			return
+		}
+	}
 
 	// 从 URL 参数获取 token
 	tokenString := c.Query("token")
@@ -102,6 +112,7 @@ func ServeWs(hub *Hub, c *gin.Context, database *db.DB, conf *cfg.Config) {
 		roomID:   roomID,
 		userID:   userIDStr, // 必须使用真实的数字 ID（的字符串形式），前后端校验才会通过
 		username: user.Username,
+		avatar:   user.Avatar,
 	}
 
 	client.hub.register <- client

@@ -34,13 +34,19 @@ export function useWebSocket(
     if (!roomId) return;
 
     try {
-      const ws = new WebSocket(`${WS_BASE_URL}/ws/${roomId}`);
+      // 清理旧连接
+      if (wsRef.current) {
+        wsRef.current.close();
+      }
+
+      const token = localStorage.getItem('auth_token') || '';
+      const ws = new WebSocket(`${WS_BASE_URL}/ws/${roomId}?token=${encodeURIComponent(token)}`);
 
       ws.onopen = () => {
-        console.log(`WebSocket connected to room: ${roomId}`);
+        console.log(`WebSocket connected to room/user: ${roomId}`);
         setIsConnected(true);
         setError(null);
-        reconnectDelayRef.current = reconnectInterval; // 重置延迟
+        reconnectDelayRef.current = reconnectInterval;
       };
 
       ws.onmessage = (event) => {

@@ -45,9 +45,7 @@ type RoomMessage struct {
 
 // 需要房主权限的操作
 var hostOnlyActions = map[string]bool{
-	"play":         true,
-	"pause":        true,
-	"seek":         true,
+	"sync":         true,
 	"change_video": true,
 }
 
@@ -68,22 +66,31 @@ func (h *Hub) Run() {
 		select {
 		case client := <-h.register:
 			// 通过 RoomService 验证房间是否存在
-			isHost, exists := h.roomService.JoinRoom(client.roomID, client.userID)
+			isUserConn := len(client.roomID) > 5 && client.roomID[:5] == "user_"
+			isHost := false
+			exists := true
+
+			if !isUserConn {
+				isHost, exists = h.roomService.JoinRoom(client.roomID, client.userID)
+			}
+
 			if !exists {
 				// 房间不存在，拒绝连接
 				log.Printf("Client %s tried to join non-existent room %s", client.userID, client.roomID)
-				close(client.send)
+				client.conn.Close()
 				continue
 			}
 
 			h.mu.Lock()
-			// 注册到房间
-			if h.rooms[client.roomID] == nil {
-				h.rooms[client.roomID] = make(utils.Set[*Client])
+			// 只有非用户级连接才注册到房间广播系统
+			if !isUserConn {
+				if h.rooms[client.roomID] == nil {
+					h.rooms[client.roomID] = make(utils.Set[*Client])
+				}
+				h.rooms[client.roomID][client] = struct{}{}
 			}
-			h.rooms[client.roomID][client] = struct{}{}
 
-			// 注册到用户连接池
+			// 注册到用户连接池（无论哪种连接都要注册，以便 NotifyUser 找到）
 			if h.users[client.userID] == nil {
 				h.users[client.userID] = make(utils.Set[*Client])
 			}
@@ -91,45 +98,39 @@ func (h *Hub) Run() {
 			h.mu.Unlock()
 
 			client.isHost = isHost
-			log.Printf("Client %s joined room %s (host=%v)", client.userID, client.roomID, isHost)
 
-			// 获取房间信息
-			var streamKey, streamURL string
-			if room, ok := h.roomService.GetRoom(client.roomID); ok {
-				streamKey = room.StreamKey
-				streamURL = room.StreamURL
+			if isUserConn {
+				log.Printf("[Hub] Client %s connected for user-level notifications", client.userID)
+				continue
 			}
 
-			// 广播用户加入（如果加入的是房主，连同推流密钥一起发给前端）
-			joinPayload := map[string]interface{}{
-				"user_id":  client.userID,
-				"username": client.username,
-				"is_host":  client.isHost,
-			}
-			if isHost {
-				joinPayload["stream_key"] = streamKey
-				joinPayload["stream_url"] = streamURL
-			}
+			log.Printf("[Hub] Client %s registration successful in room %s (host=%v). Current connections in room: %d",
+				client.userID, client.roomID, isHost, len(h.rooms[client.roomID]))
 
-			h.broadcast <- &RoomMessage{
-				RoomID: client.roomID,
-				Action: "join",
-				Data:   mustJSON(joinPayload),
-				From:   client.userID,
+			// 广播房间人员变动（包含全量列表）
+			h.broadcastPeopleChange(client.roomID)
+
+			// 如果不是房主加入，向房主请求一次同步状态
+			if !isHost {
+				hostID := h.roomService.GetHost(client.roomID)
+				if hostID != "" {
+					h.userNotify <- &UserNotification{
+						UserID: hostID,
+						Type:   "request_sync",
+						Data:   json.RawMessage(`{}`),
+					}
+					log.Printf("[Hub] Sent request_sync to host %s", hostID)
+				}
 			}
 
 		case client := <-h.unregister:
 			h.mu.Lock()
+			roomID := client.roomID
 			// 从房间移除
-			if clients, ok := h.rooms[client.roomID]; ok {
-				if _, ok := clients[client]; ok {
-					delete(clients, client)
-					close(client.send)
-
-					// 房间空了，清理
-					if len(clients) == 0 {
-						delete(h.rooms, client.roomID)
-					}
+			if clients, ok := h.rooms[roomID]; ok {
+				delete(clients, client)
+				if len(clients) == 0 {
+					delete(h.rooms, roomID)
 				}
 			}
 
@@ -141,31 +142,24 @@ func (h *Hub) Run() {
 				}
 			}
 			h.mu.Unlock()
-			log.Printf("Client %s left room %s", client.userID, client.roomID)
+			close(client.send)
+			log.Printf("Client %s left room %s", client.userID, roomID)
 
 			// 通过 RoomService 处理离开逻辑（自动转让房主、删除空房间）
-			isEmpty, newHostID := h.roomService.LeaveRoom(client.roomID, client.userID)
-			if !isEmpty && newHostID != "" {
-				// 房主变更，更新客户端状态
-				h.mu.Lock()
-				if clients, ok := h.rooms[client.roomID]; ok {
-					for c := range clients {
-						if c.userID == newHostID {
-							c.isHost = true
-							break
-						}
+			isEmpty, newHostID := h.roomService.LeaveRoom(roomID, client.userID)
+
+			// 广播房间人员变动
+			if !isEmpty {
+				h.broadcastPeopleChange(roomID)
+
+				if newHostID != "" {
+					// 房主变更，广播给所有人
+					h.broadcast <- &RoomMessage{
+						RoomID: roomID,
+						Action: "host_transfer",
+						Data:   mustJSON(map[string]string{"new_host_id": newHostID}),
 					}
 				}
-				h.mu.Unlock()
-				log.Printf("Room %s new host: %s", client.roomID, newHostID)
-			}
-
-			// 广播用户离开
-			h.broadcast <- &RoomMessage{
-				RoomID: client.roomID,
-				Action: "leave",
-				Data:   mustJSON(map[string]interface{}{"user_id": client.userID}),
-				From:   client.userID,
 			}
 
 		case notify := <-h.userNotify:
@@ -183,9 +177,8 @@ func (h *Hub) Run() {
 					select {
 					case client.send <- data:
 					default:
-						// 发送失败，关闭连接
-						close(client.send)
-						delete(clients, client)
+						// 发送失败，注销连接
+						go func(c *Client) { h.unregister <- c }(client)
 					}
 				}
 			}
@@ -209,8 +202,7 @@ func (h *Hub) Run() {
 								"action": msg.Action,
 							}):
 							default:
-								close(client.send)
-								delete(clients, client)
+								go func(c *Client) { h.unregister <- c }(client)
 							}
 							break
 						}
@@ -222,15 +214,16 @@ func (h *Hub) Run() {
 
 			data, _ := json.Marshal(msg)
 			for client := range clients {
-				// 不发给发送者自己（除了错误消息）
-				if client.userID == msg.From {
+				// 对于 people_change 和 host_transfer，必须发给所有人（包括发送者自己）
+				// 对于普通的播放控制同步消息（play, pause, seek, sync），不发给发送者自己以免引起回环状态冲突
+				isSyncAction := msg.Action == "people_change" || msg.Action == "host_transfer"
+				if !isSyncAction && client.userID == msg.From {
 					continue
 				}
 				select {
 				case client.send <- data:
 				default:
-					close(client.send)
-					delete(clients, client)
+					go func(c *Client) { h.unregister <- c }(client)
 				}
 			}
 		}
@@ -300,6 +293,45 @@ func (h *Hub) NotifyUser(userID, notifyType string, data interface{}) {
 		UserID: userID,
 		Type:   notifyType,
 		Data:   jsonData,
+	}
+}
+
+// broadcastPeopleChange 广播当前房间的所有在线用户列表
+func (h *Hub) broadcastPeopleChange(roomID string) {
+	h.mu.RLock()
+	clients, ok := h.rooms[roomID]
+	if !ok {
+		h.mu.RUnlock()
+		log.Printf("[Hub] Room %s not found in h.rooms map", roomID)
+		return
+	}
+
+	// 收集房间内所有唯一用户的信息
+	// 同一用户可能有多个连接，但列表里只显示一次
+	userMap := make(map[string]map[string]interface{})
+	for client := range clients {
+		if _, exists := userMap[client.userID]; !exists {
+			userMap[client.userID] = map[string]interface{}{
+				"user_id":  client.userID,
+				"username": client.username,
+				"avatar":   client.avatar,
+				"is_host":  h.roomService.GetHost(roomID) == client.userID,
+			}
+		}
+	}
+	h.mu.RUnlock()
+
+	userList := make([]map[string]interface{}, 0, len(userMap))
+	for _, userData := range userMap {
+		userList = append(userList, userData)
+	}
+
+	log.Printf("[Hub] Broadcasting people_change for room %s, total users: %d", roomID, len(userList))
+
+	h.broadcast <- &RoomMessage{
+		RoomID: roomID,
+		Action: "people_change",
+		Data:   mustJSON(map[string]interface{}{"users": userList}),
 	}
 }
 

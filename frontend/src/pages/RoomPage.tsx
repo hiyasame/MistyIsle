@@ -6,7 +6,7 @@ import { getPlayUrl, getLiveUrl } from '../utils/config';
 import SyncPlayer from '../components/SyncPlayer';
 import FlvPlayer from '../components/FlvPlayer';
 import { useAuth } from '../contexts/AuthContext';
-import {Room, Video, RoomUser, RoomMessage} from '../types';
+import { Room, Video, RoomUser, RoomMessage } from '../types';
 
 /**
  * 房间页面 - 同步观影/直播核心页面
@@ -37,8 +37,7 @@ export default function RoomPage() {
         setRoom(res.data);
         setCurrentVideo(res.data.current_video || null);
         setIsHost(res.data.host_id === userId);
-        // 用户列表由 WebSocket 连接后更新，初始为空
-        setUsers([]);
+        // 用户列表由 WebSocket 连接后更新，初次进入页面不手动清空以防覆盖 WS 已推送的数据
       } else {
         throw new Error(res.error || 'Failed to load room');
       }
@@ -71,63 +70,53 @@ export default function RoomPage() {
     loadVideos();
   }, [loadRoom, loadVideos]);
 
+  const sendMessageRef = useRef<(action: string, data?: any) => boolean>(() => false);
+
   // 处理 WebSocket 消息
   const handleWebSocketMessage = useCallback((data: RoomMessage) => {
-    console.log('Room WebSocket message:', data);
+    console.log(`[RoomPage] Received action: ${data.action}`, data.data);
 
     switch (data.action) {
       case 'connected':
-        // WebSocket 连接成功，添加自己到用户列表
-        if (user) {
-          setUsers([{
-            user_id: user.user_id,
-            username: user.username,
-            avatar: user.avatar,
-            is_host: isHost
-          }]);
-        }
+        // WebSocket 连接成功，后端会随后发送 people_change
+        console.log('Successfully connected to WebSocket hub');
         break;
 
-      case 'join':
-        // 用户加入（包括自己）
-        if (data.data && 'user_id' in data.data) {
-          const joinData = data.data as { user_id: string; username?: string; is_host?: boolean };
-          // 如果是自己加入且后端认定为房主，则更新本地 isHost 状态
-          if (joinData.user_id === userId && joinData.is_host) {
-            setIsHost(true);
-          }
+      case 'people_change':
+        // 全量用户列表同步
+        if (data.data && 'users' in data.data) {
+          const { users: newUsers } = data.data as { users: RoomUser[] };
+          setUsers(newUsers);
 
-          setUsers(prev => {
-            // 避免重复添加
-            if (prev.find(u => u.user_id === joinData.user_id)) {
-              // 已经是用户列表里的人了，我们也可以考虑更新TA的信息
-              return prev.map(u =>
-                u.user_id === joinData.user_id ? { ...u, is_host: joinData.is_host || false } : u
-              );
+          // 检查自己是否被任命为新房主
+          const me = newUsers.find(u => String(u.user_id) === String(userId));
+          if (me) {
+            console.log('[RoomPage] Found myself in user list:', me);
+            if (me.is_host !== isHost) {
+              console.log('[RoomPage] Host status synced from list:', me.is_host);
+              setIsHost(me.is_host);
             }
-            return [...prev, {
-              user_id: joinData.user_id,
-              username: joinData.user_id === userId ? (user?.username || joinData.user_id) : (joinData.username || `用户${joinData.user_id}`),
-              is_host: joinData.is_host || false
-            }];
-          });
+          }
         }
         break;
 
-      case 'leave':
-        // 用户离开
-        if (data.data && 'user_id' in data.data) {
-          const leaveData = data.data as { user_id: string };
-          setUsers(prev => prev.filter(u => u.user_id !== leaveData.user_id));
+      case 'request_sync':
+        // 新用户进入，向房主请求同步（只有房主会收到）
+        if (isHost && playerRef.current) {
+          const videoElement = document.querySelector('video');
+          if (videoElement) {
+            sendMessageRef.current('sync', { time: videoElement.currentTime });
+          }
         }
         break;
 
       case 'play':
       case 'pause':
       case 'seek':
+      case 'sync':
         // 同步播放控制
         if (playerRef.current && 'handleRemoteAction' in playerRef.current) {
-          const playbackData = (data.data && 'time' in data.data) ? data.data : { time: 0 };
+          const playbackData = (data.data && 'time' in data.data) ? data.data as { time: number } : { time: 0 };
           (playerRef.current as any).handleRemoteAction(data.action, playbackData);
         }
         break;
@@ -175,7 +164,7 @@ export default function RoomPage() {
       default:
         console.warn('Unknown action:', data.action);
     }
-  }, [userId, users]);
+  }, [userId, isHost]);
 
   // 连接 WebSocket
   const { isConnected, sendMessage } = useRoomWebSocket(
@@ -183,6 +172,14 @@ export default function RoomPage() {
     handleWebSocketMessage,
     { autoReconnect: true }
   );
+
+  useEffect(() => {
+    console.log('[RoomPage] Status update:', { isConnected, isHost, userCount: users.length, currentUsers: users });
+  }, [isConnected, isHost, users]);
+
+  useEffect(() => {
+    sendMessageRef.current = sendMessage;
+  }, [sendMessage]);
 
   // 房主操作：播放控制
   const handleHostAction = useCallback((action: string, data: { time?: number }) => {
@@ -307,22 +304,53 @@ export default function RoomPage() {
           </div>
         </div>
 
-        {isHost && (
+        <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
+          {isHost && (
+            <button
+              onClick={() => setShowVideoLibrary(!showVideoLibrary)}
+              style={{
+                padding: '0.6rem 1.25rem',
+                backgroundColor: '#3b82f6',
+                color: 'white',
+                border: 'none',
+                borderRadius: '8px',
+                cursor: 'pointer',
+                fontSize: '0.875rem',
+                fontWeight: '500',
+                transition: 'all 0.2s',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.5rem'
+              }}
+              onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#2563eb'}
+              onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#3b82f6'}
+            >
+              📹 {showVideoLibrary ? '关闭视频库' : '选择视频'}
+            </button>
+          )}
+
           <button
-            onClick={() => setShowVideoLibrary(!showVideoLibrary)}
+            onClick={() => window.open('/upload', '_blank')}
             style={{
-              padding: '0.75rem 1.5rem',
-              backgroundColor: '#3b82f6',
+              padding: '0.6rem 1.25rem',
+              backgroundColor: '#475569',
               color: 'white',
               border: 'none',
               borderRadius: '8px',
               cursor: 'pointer',
-              fontSize: '1rem'
+              fontSize: '0.875rem',
+              fontWeight: '500',
+              transition: 'all 0.2s',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.5rem'
             }}
+            onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#334155'}
+            onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#475569'}
           >
-            {showVideoLibrary ? '关闭视频库' : '选择视频'}
+            📤 上传视频
           </button>
-        )}
+        </div>
       </header>
 
       {/* 主内容区 */}

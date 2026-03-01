@@ -33,24 +33,12 @@ func (h *Handler) SRSCallback(hub *websocket.Hub) gin.HandlerFunc {
 		log.Printf("[SRS Callback] action=%s app=%s stream=%s param=%s client_id=%s ip=%s",
 			req.Action, req.App, req.Stream, req.Param, req.ClientID, req.IP)
 
-		// 解析 roomID 和 streamKey，支持两种推流 URL 格式：
-		//
-		// 格式 1 (OBS): Server=rtmp://host/live/ROOMID, Key=streamkey
-		//   → app="live/ROOMID", stream="streamkey", param=""
-		//
-		// 格式 2 (ffmpeg): rtmp://host/live/ROOMID?key=streamkey
-		//   → app="live", stream="ROOMID", param="?key=streamkey"
-		var roomID, streamKey string
-		appParts := strings.Split(req.App, "/")
-		if len(appParts) >= 2 && appParts[len(appParts)-1] != "" {
-			// 格式 1: roomID 在 app 路径中，stream 就是推流密钥
-			roomID = appParts[len(appParts)-1]
-			streamKey = req.Stream
-		} else {
-			// 格式 2: roomID 是 stream，推流密钥在 param 中
-			roomID = req.Stream
-			streamKey = parseStreamKey(req.Param)
-		}
+		// 按照用户要求的 Format:
+		// Server URL: rtmp://host/live?key=SECRET
+		// Stream Key (OBS): ROOMID
+		// 结果: app="live", stream="ROOMID", param="?key=SECRET" (可能重复)
+		roomID := req.Stream
+		streamKey := parseStreamKey(req.Param)
 
 		log.Printf("[SRS Callback] parsed roomID=%s streamKey=%s", roomID, streamKey)
 
@@ -95,16 +83,19 @@ func (h *Handler) SRSCallback(hub *websocket.Hub) gin.HandlerFunc {
 }
 
 // parseStreamKey 从 URL 参数中解析推流密钥
-// Param 格式: "?key=xxx" 或 "key=xxx"
 func parseStreamKey(param string) string {
 	if param == "" {
 		return ""
 	}
-	// 确保以 ? 开头
-	if !strings.HasPrefix(param, "?") {
-		param = "?" + param
+	// 针对 SRS 可能会重复拼接参数的情况（如 ?key=A?key=A），进行规范化
+	normalized := param
+	if strings.HasPrefix(normalized, "?") {
+		normalized = normalized[1:]
 	}
-	values, err := url.ParseQuery(param[1:]) // 去掉 ?
+	// 将后续的 ? 替换为 & 以便 url.ParseQuery 解析
+	normalized = strings.ReplaceAll(normalized, "?", "&")
+
+	values, err := url.ParseQuery(normalized)
 	if err != nil {
 		return ""
 	}
