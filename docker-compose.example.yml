@@ -10,7 +10,8 @@ services:
         # ==================== 前端构建环境变量 ====================
         - VITE_API_BASE_URL=/api/v1
         - VITE_WS_BASE_URL=wss://yourdomain.com/api/v1
-        - VITE_SRS_BASE_URL=/srs
+        - VITE_SRS_HTTP_BASE_URL=https://yourdomain.com/srs
+        - VITE_SRS_RTMP_BASE_URL=rtmp://yourdomain.com:1935
         - VITE_CDN_BASE_URL=https://cdn.yourdomain.com
     container_name: misty-isle-frontend
     ports:
@@ -65,9 +66,13 @@ services:
       # ==================== Modal 视频处理 ====================
       - MODAL_VIDEO_PROCESSOR_URL=https://your-modal-endpoint.modal.run
 
-      # ==================== SRS 配置（内部通信）====================
-      - SRS_BASE_URL=http://srs:8080
+      # ==================== SRS 配置 ====================
+      # 内网地址（后端内部通信用）
+      - SRS_HTTP_URL=http://srs:8080
       - SRS_RTMP_URL=rtmp://srs:1935
+      # 公网地址（展示/下发给用户）
+      - SRS_PUBLIC_HTTP_URL=https://yourdomain.com/srs
+      - SRS_PUBLIC_RTMP_URL=rtmp://yourdomain.com:1935
 
       # ==================== 服务配置 ====================
       - SERVER_PORT=8081

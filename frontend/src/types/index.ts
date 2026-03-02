@@ -26,7 +26,7 @@ export interface Room {
   status?: string;
   video_url?: string;
   live_hls_url?: string;
-  stream_url?: string;
+  stream_path?: string; // 推流相对路径
   stream_key?: string;
   player_count?: number;
   players?: string[];

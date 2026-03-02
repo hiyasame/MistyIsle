@@ -24,8 +24,8 @@ type Room struct {
 
 	// 直播相关
 	StreamKey     string `json:"stream_key,omitempty"`      // 推流密钥（仅房主可见）
-	StreamURL     string `json:"stream_url,omitempty"`      // 推流地址 rtmp://...
-	LiveHLSPath   string `json:"live_hls_path,omitempty"`   // 直播相对路径 (/live/{roomId}.flv)
+	StreamPath    string `json:"stream_path,omitempty"`     // 推流相对路径 /live?key=...（前端拼接 RTMP baseURL）
+	LiveHLSPath   string `json:"live_hls_path,omitempty"`   // 直播相对路径 /live/{roomId}.flv（前端拼接 HTTP baseURL）
 	LiveStartedAt int64  `json:"live_started_at,omitempty"` // 直播开始时间戳
 }
 

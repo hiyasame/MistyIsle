@@ -27,12 +27,11 @@ func (h *Handler) RoomCreate(c *gin.Context) {
 		return
 	}
 
-	// 创建房间，传入 SRS RTMP 地址
-	srsRTMPURL := h.Cfg.SRSRTMPURL // 如: rtmp://localhost:1935
+	// 创建房间
 	room := h.RoomService.CreateRoom(model.RoomOptions{
 		Name: req.Name,
 		Desc: req.Desc,
-	}, fmt.Sprintf("%d", userID), srsRTMPURL)
+	}, fmt.Sprintf("%d", userID))
 
 	h.Success(c, gin.H{
 		"room_id":       room.ID,
@@ -40,9 +39,9 @@ func (h *Handler) RoomCreate(c *gin.Context) {
 		"desc":          room.Desc,
 		"host_id":       room.HostID,
 		"ws_url":        fmt.Sprintf("/ws/%s", room.ID),
-		"stream_url":    room.StreamURL, // Server URL: rtmp://.../live?key=SECRET
-		"stream_key":    room.ID,        // Stream Key (OBS): ROOMID
-		"live_hls_path": room.LiveHLSPath,
+		"stream_path":   room.StreamPath,  // 推流相对路径: /live?key=SECRET（前端拼接 RTMP base URL）
+		"stream_key":    room.ID,          // Stream Key (OBS): ROOMID
+		"live_hls_path": room.LiveHLSPath, // 直播播放相对路径（前端拼接 HTTP base URL）
 	})
 }
 
@@ -86,8 +85,8 @@ func (h *Handler) RoomGet(c *gin.Context) {
 
 	// 只有房主才能看到推流信息
 	if room.HostID == currentUserID {
-		response["stream_url"] = room.StreamURL // rtmp://.../live?key=SECRET
-		response["stream_key"] = room.ID        // ROOMID
+		response["stream_path"] = room.StreamPath // /live?key=SECRET
+		response["stream_key"] = room.ID          // ROOMID
 	}
 
 	// 如果正在播放视频或直播，返回统一的 current_video 结构

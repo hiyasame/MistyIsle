@@ -1,12 +1,12 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
-import { roomApi, videoApi } from '../services/api';
-import { useRoomWebSocket } from '../hooks/useRoomWebSocket';
-import { getPlayUrl, getLiveUrl } from '../utils/config';
+import {useCallback, useEffect, useRef, useState} from 'react';
+import {useNavigate, useParams} from 'react-router-dom';
+import {roomApi, videoApi} from '../services/api';
+import {useRoomWebSocket} from '../hooks/useRoomWebSocket';
+import {getLiveUrl, getPlayUrl, getStreamUrl} from '../utils/config';
 import SyncPlayer from '../components/SyncPlayer';
 import FlvPlayer from '../components/FlvPlayer';
-import { useAuth } from '../contexts/AuthContext';
-import { Room, Video, RoomUser, RoomMessage } from '../types';
+import {useAuth} from '../contexts/AuthContext';
+import {Room, RoomMessage, RoomUser, Video} from '../types';
 
 /**
  * 房间页面 - 同步观影/直播核心页面
@@ -431,7 +431,7 @@ export default function RoomPage() {
               </div>
 
               {/* 推流信息 */}
-              {isHost && room?.stream_url && (
+              {isHost && room?.stream_path && (
                 <div style={{
                   backgroundColor: '#334155',
                   padding: '1.5rem',
@@ -454,7 +454,7 @@ export default function RoomPage() {
                     }}>
                       <input
                         type="text"
-                        value={room.stream_url}
+                        value={getStreamUrl(room.stream_path || '') || ''}
                         readOnly
                         style={{
                           flex: 1,
@@ -469,7 +469,7 @@ export default function RoomPage() {
                       />
                       <button
                         onClick={() => {
-                          navigator.clipboard.writeText(room.stream_url || '');
+                          navigator.clipboard.writeText(getStreamUrl(room.stream_path || '') || '');
                           alert('已复制到剪贴板');
                         }}
                         style={{

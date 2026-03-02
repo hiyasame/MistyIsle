@@ -2,7 +2,8 @@
 export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080';
 export const WS_BASE_URL = import.meta.env.VITE_WS_BASE_URL || 'ws://localhost:8080';
 export const CDN_BASE_URL = import.meta.env.VITE_CDN_BASE_URL || 'https://cdn.yourdomain.com';
-export const SRS_BASE_URL = import.meta.env.VITE_SRS_BASE_URL || 'http://localhost:8080';
+export const SRS_HTTP_BASE_URL = import.meta.env.VITE_SRS_HTTP_BASE_URL || 'http://localhost:8080';
+export const SRS_RTMP_BASE_URL = import.meta.env.VITE_SRS_RTMP_BASE_URL || 'rtmp://localhost:1935';
 
 /**
  * 构建完整的视频播放 URL
@@ -19,15 +20,27 @@ export function getPlayUrl(hlsPath: string): string | null {
 }
 
 /**
- * 构建完整的直播流 URL
+ * 构建完整的直播流 URL (HTTP-FLV)
  * @param livePath - 相对路径 (如: /live/ROOMID.flv)
  * @returns 完整 URL
  */
 export function getLiveUrl(livePath: string): string | null {
   if (!livePath) return null;
 
-  // 直播流通过 SRS 服务器
-  return `${SRS_BASE_URL}${livePath}`;
+  // 直播流通过 SRS HTTP 服务器
+  return `${SRS_HTTP_BASE_URL}${livePath}`;
+}
+
+/**
+ * 构建完整的推流 URL (RTMP)
+ * @param streamPath - 相对路径 (如: /live?key=xxx)
+ * @returns 完整 URL
+ */
+export function getStreamUrl(streamPath: string): string | null {
+  if (!streamPath) return null;
+
+  // 推流通过 SRS RTMP 服务器
+  return `${SRS_RTMP_BASE_URL}${streamPath}`;
 }
 
 // 视频状态文本映射

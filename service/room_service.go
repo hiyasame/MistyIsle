@@ -26,7 +26,7 @@ func NewRoomService() *RoomService {
 }
 
 // CreateRoom 创建房间，自动生成房间ID和推流密钥
-func (rm *RoomService) CreateRoom(opts model.RoomOptions, hostID string, srsBaseURL string) *model.Room {
+func (rm *RoomService) CreateRoom(opts model.RoomOptions, hostID string) *model.Room {
 	rm.mu.Lock()
 	defer rm.mu.Unlock()
 
@@ -43,8 +43,8 @@ func (rm *RoomService) CreateRoom(opts model.RoomOptions, hostID string, srsBase
 		HostID:      hostID,
 		Status:      model.RoomStatusIdle,
 		StreamKey:   streamKey,
-		StreamURL:   srsBaseURL + "/live?key=" + streamKey,
-		LiveHLSPath: "/live/" + roomID + ".flv", // HTTP-FLV 相对路径
+		StreamPath:  "/live?key=" + streamKey,   // 推流相对路径
+		LiveHLSPath: "/live/" + roomID + ".flv", // 直播播放相对路径
 	}
 
 	rm.rooms[roomID] = room

@@ -32,8 +32,10 @@ type Config struct {
 	R2PublicURL string `env:"R2_PUBLIC_URL" default:""` // CDN 加速域名
 
 	// SRS
-	SRSHTTPURL string `env:"SRS_HTTP_URL" default:"http://localhost:8080"`
-	SRSRTMPURL string `env:"SRS_RTMP_URL" default:"rtmp://localhost:1935"`
+	SRSHTTPURL       string `env:"SRS_HTTP_URL" default:"http://localhost:8080"`        // 内网 HTTP 地址（后端内部通信用）
+	SRSRTMPURL       string `env:"SRS_RTMP_URL" default:"rtmp://localhost:1935"`        // 内网 RTMP 地址（后端内部通信用）
+	SRSPublicHTTPURL string `env:"SRS_PUBLIC_HTTP_URL" default:"http://localhost:8080"` // 公网 HTTP 地址（下发给用户播放）
+	SRSPublicRTMPURL string `env:"SRS_PUBLIC_RTMP_URL" default:"rtmp://localhost:1935"` // 公网 RTMP 地址（展示给用户推流）
 
 	// SMTP 邮件服务
 	SMTPHost     string `env:"SMTP_HOST" default:"smtp.gmail.com"`
@@ -85,6 +87,8 @@ func Load() *Config {
 
 	cfg.SRSHTTPURL = getEnv("SRS_HTTP_URL", "http://localhost:8080")
 	cfg.SRSRTMPURL = getEnv("SRS_RTMP_URL", "rtmp://localhost:1935")
+	cfg.SRSPublicHTTPURL = getEnv("SRS_PUBLIC_HTTP_URL", cfg.SRSHTTPURL) // 默认使用内网地址
+	cfg.SRSPublicRTMPURL = getEnv("SRS_PUBLIC_RTMP_URL", cfg.SRSRTMPURL) // 默认使用内网地址
 
 	cfg.SMTPHost = getEnv("SMTP_HOST", "smtp.gmail.com")
 	cfg.SMTPPort = getEnvInt("SMTP_PORT", 587)
