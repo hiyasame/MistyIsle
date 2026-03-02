@@ -59,7 +59,7 @@ def send_webhook(webhook_url: str, payload: dict):
     cpu=4.0,       # More CPUs for faster transcoding
     memory=4096,   # 4GB RAM
 )
-def process_video_task(video_id: str, webhook_url: str = None, segment_duration: int = 10):
+def process_video_task(video_id: str, webhook_url: str = None, segment_duration: int = 6):
     """
     Core processing task: R2 -> Local -> FFmpeg -> R2 -> Webhook
 
@@ -143,26 +143,78 @@ def process_video_task(video_id: str, webhook_url: str = None, segment_duration:
             })
             return {"status": "error", "message": error_msg}
 
+        # ===== Stage 1.5: Probe Codecs =====
+        print(f"🔍 [Stage 1.5/4] probing: detecting video/audio formats...")
+        v_codec, a_codec = "unknown", "unknown"
+        try:
+            v_probe = subprocess.check_output([
+                "ffprobe", "-v", "error", "-select_streams", "v:0",
+                "-show_entries", "stream=codec_name",
+                "-of", "default=noprint_wrappers=1:nokey=1",
+                str(local_input)
+            ]).decode().strip().lower()
+            a_probe = subprocess.check_output([
+                "ffprobe", "-v", "error", "-select_streams", "a:0",
+                "-show_entries", "stream=codec_name",
+                "-of", "default=noprint_wrappers=1:nokey=1",
+                str(local_input)
+            ]).decode().strip().lower()
+            v_codec, a_codec = v_probe, a_probe
+            print(f"🎥 Codecs: {v_codec} / {a_codec}")
+        except Exception as e:
+            print(f"⚠️ Probing failed: {e}, falling back to full transcode.")
+
         # ===== Stage 2: modal_slice =====
-        print(f"🔪 [Stage 2/4] modal_slice: Converting to HLS (segment={segment_duration}s)...")
+        # 判断是否可以走秒切（Copy）模式
+        # 1. H.264 + AAC: 全平台最强兼容，直接 copy 到 fmp4
+        # 2. AV1 + Opus: 现代高清标准，直接 copy 到 fmp4
+        is_h264_aac = (v_codec == "h264" and a_codec == "aac")
+        is_av1_opus = (v_codec == "av1" and a_codec == "opus")
+        
+        use_copy = is_h264_aac or is_av1_opus
+        
+        if use_copy:
+            action_name = "Fast Copy (Muxing only)"
+            progress_msg = f"Ultra-fast HLS muxing ({v_codec}/{a_codec})"
+        else:
+            action_name = "Transcoding to HLS"
+            progress_msg = f"Transcoding and slicing video into HLS"
+
+        print(f"🔪 [Stage 2/4] modal_slice: {action_name} (segment={segment_duration}s)...")
         send_webhook(webhook_url, {
             "video_id": video_id,
             "status": "modal_slice",
             "progress": 25,
-            "message": "Slicing video into HLS segments"
+            "message": progress_msg
         })
 
         m3u8_path = hls_output_dir / "index.m3u8"
-        ffmpeg_cmd = [
-            "ffmpeg", "-i", str(local_input),
-            "-c", "copy",
-            "-start_number", "0",
-            "-hls_time", str(segment_duration),
-            "-hls_list_size", "0",
-            "-hls_segment_filename", str(hls_output_dir / "seg_%03d.ts"),
-            "-f", "hls",
-            "-y", str(m3u8_path)
-        ]
+        
+        if use_copy:
+             ffmpeg_cmd = [
+                "ffmpeg", "-i", str(local_input),
+                "-c", "copy",                # 直接流拷贝，速度极快
+                "-f", "hls",
+                "-hls_segment_type", "fmp4", # Copy 模式推荐使用 fMP4 以支持 AV1
+                "-hls_fmp4_init_filename", "init.mp4",
+                "-hls_time", str(segment_duration),
+                "-hls_list_size", "0",
+                "-hls_segment_filename", str(hls_output_dir / "seg_%03d.m4s"),
+                "-y", str(m3u8_path)
+            ]
+        else:
+            ffmpeg_cmd = [
+                "ffmpeg", "-i", str(local_input),
+                "-c:v", "libx264", "-preset", "ultrafast",
+                "-tune", "zerolatency", "-profile:v", "main", "-level", "4.0",
+                "-pix_fmt", "yuv420p", "-g", "60", "-keyint_min", "60", "-sc_threshold", "0",
+                "-c:a", "aac", "-b:a", "128k", "-ac", "2", "-ar", "44100",
+                "-f", "hls", # 转码模式依然使用传统的 TS
+                "-hls_time", str(segment_duration),
+                "-hls_list_size", "0",
+                "-hls_segment_filename", str(hls_output_dir / "seg_%03d.ts"),
+                "-y", str(m3u8_path)
+            ]
 
         start_time = time.time()
         process = subprocess.run(ffmpeg_cmd, capture_output=True, text=True)
@@ -180,94 +232,86 @@ def process_video_task(video_id: str, webhook_url: str = None, segment_duration:
         slice_duration = time.time() - start_time
         print(f"✅ Slicing completed in {slice_duration:.2f}s")
 
-        # ===== Stage 3: Upload & Notify =====
         hls_files = list(hls_output_dir.iterdir())
-        total_files = len(hls_files)
-
-        # 找到 m3u8 和 ts 文件
+        
+        # 定义需要上传的文件分组
         m3u8_file = next((f for f in hls_files if f.suffix == ".m3u8"), None)
-        ts_files = [f for f in hls_files if f.suffix == ".ts"]
+        # 除 index 以外的所有数据分片 (ts, m4s, mp4, init.mp4)
+        data_files = [f for f in hls_files if f.suffix in [".ts", ".m4s", ".mp4"] and f.name != "index.m3u8"]
+        
+        print(f"⬆️ [Stage 3/4] Uploading {len(data_files) + 1} files...")
 
-        print(f"⬆️ [Stage 3/4] Uploading {total_files} files ({len(ts_files)} segments + 1 playlist)")
+        def get_content_type(filename):
+            ext = os.path.splitext(filename)[1].lower()
+            if ext == '.m3u8': return "application/vnd.apple.mpegurl"
+            if ext == '.ts': return "video/MP2T"
+            if ext == '.m4s': return "video/iso.segment"
+            if ext == '.mp4': return "video/mp4" # 主要是针对 init.mp4
+            return "application/octet-stream"
 
-        # 先上传 m3u8
+        # 1. 优先上传 index.m3u8 (确保前端能尽快拿到播放列表)
         if m3u8_file:
-            print(f"📄 Uploading m3u8: {m3u8_file.name}")
             m3u8_key = f"{target_dir}/{m3u8_file.name}"
             with open(m3u8_file, "rb") as f:
                 s3_client.put_object(
-                    Bucket=r2_bucket,
-                    Key=m3u8_key,
-                    Body=f,
-                    ContentType="application/vnd.apple.mpegurl",
+                    Bucket=r2_bucket, Key=m3u8_key, Body=f,
+                    ContentType=get_content_type(m3u8_file.name),
                     Expires=expire_time
                 )
 
-            # ===== Stage 3: m3u8_prepared =====
-            # 只返回相对路径，让前端拼接 CDN 域名
             playlist_path = f"{target_dir}/index.m3u8"
-            print(f"✅ M3U8 uploaded! Playlist path: {playlist_path}")
+            print(f"✅ Playlist ready: {playlist_path}")
             send_webhook(webhook_url, {
                 "video_id": video_id,
                 "status": "m3u8_prepared",
                 "progress": 40,
-                "playlist_path": playlist_path,  # 相对路径
-                "message": "Playlist ready, can start playback"
+                "playlist_path": playlist_path,
+                "message": "Playlist ready, starting segment synchronization"
             })
 
-        # ===== Stage 4: modal_upload (with progress) =====
-        print(f"⬆️ [Stage 4/4] modal_upload: Uploading {len(ts_files)} segments with 20 concurrent threads...")
+        # ===== Stage 4: modal_upload (Concurrent) =====
+        print(f"⬆️ [Stage 4/4] modal_upload: Uploading {len(data_files)} segments...")
 
         from concurrent.futures import ThreadPoolExecutor, as_completed
 
         uploaded_count = 0
-        last_progress = 40  # 从 40% 开始
+        last_progress = 40
         failed_uploads = []
 
-        def upload_segment(ts_file):
-            """上传单个切片"""
+        def upload_data_file(file_path):
+            """上传单个数据文件"""
             try:
-                ts_key = f"{target_dir}/{ts_file.name}"
-                with open(ts_file, "rb") as f:
+                key = f"{target_dir}/{file_path.name}"
+                with open(file_path, "rb") as f:
                     s3_client.put_object(
-                        Bucket=r2_bucket,
-                        Key=ts_key,
-                        Body=f,
-                        ContentType="video/MP2T",
+                        Bucket=r2_bucket, Key=key, Body=f,
+                        ContentType=get_content_type(file_path.name),
                         Expires=expire_time
                     )
-                return (True, ts_file.name)
+                return (True, file_path.name)
             except Exception as e:
-                return (False, ts_file.name, str(e))
+                return (False, file_path.name, str(e))
 
-        # 使用线程池，每批20个切片并发上传
-        batch_size = 20
-        with ThreadPoolExecutor(max_workers=batch_size) as executor:
-            # 提交所有上传任务
-            future_to_file = {executor.submit(upload_segment, ts_file): ts_file for ts_file in ts_files}
-
+        # 使用线程池并发上传，充分利用 R2 的并发处理能力
+        with ThreadPoolExecutor(max_workers=20) as executor:
+            future_to_file = {executor.submit(upload_data_file, f): f for f in data_files}
             for future in as_completed(future_to_file):
                 result = future.result()
-
-                if result[0]:  # 上传成功
-                    uploaded_count += 1
-                else:  # 上传失败
+                if result[0]: uploaded_count += 1
+                else:
                     failed_uploads.append(result[1])
                     print(f"⚠️ Failed to upload {result[1]}: {result[2]}")
 
-                # 计算进度：40% -> 100% (60% range)
-                current_progress = 40 + int((uploaded_count / len(ts_files)) * 60)
-
-                # 每增加 10% 就通知一次
-                if current_progress >= last_progress + 10:
-                    print(f"  📊 Progress: {uploaded_count}/{len(ts_files)} segments ({current_progress}%)")
+                # 计算动态进度
+                current_progress = 40 + int((uploaded_count / len(data_files)) * 60)
+                if current_progress >= last_progress + 10 or uploaded_count == len(data_files):
                     send_webhook(webhook_url, {
                         "video_id": video_id,
                         "status": "modal_upload",
-                        "progress": current_progress,
+                        "progress": min(99, current_progress), # Ready 才会发 100%
                         "segments_uploaded": uploaded_count,
-                        "segments_total": len(ts_files),
-                        "message": f"Uploading segments: {uploaded_count}/{len(ts_files)}"
+                        "segments_total": len(data_files),
+                        "message": f"Uploading: {uploaded_count}/{len(data_files)}"
                     })
                     last_progress = current_progress
 
@@ -276,23 +320,23 @@ def process_video_task(video_id: str, webhook_url: str = None, segment_duration:
             error_msg = f"Failed to upload {len(failed_uploads)} segments: {', '.join(failed_uploads[:5])}"
             print(f"❌ {error_msg}")
             send_webhook(webhook_url, {
-                "video_id": video_id,
-                "status": "failed",
-                "error": error_msg
+                "video_id": video_id, "status": "failed", "error": error_msg
             })
             return {"status": "error", "message": error_msg}
 
         # ===== Final: Success =====
-        print(f"✅ All {total_files} files uploaded successfully!")
+        print(f"✅ All files uploaded successfully!")
 
         result_payload = {
             "video_id": video_id,
             "status": "ready",
             "progress": 100,
-            "playlist_path": playlist_path,  # 相对路径
-            "segments_count": len(ts_files),
-            "processing_time": slice_duration,
-            "message": "Video processing completed"
+            "playlist_path": playlist_path,
+            "segments_count": uploaded_count,
+            "is_copy": use_copy,
+            "v_codec": v_codec,
+            "a_codec": a_codec,
+            "message": f"Completed ({'Copy' if use_copy else 'Transcode'})"
         }
 
         send_webhook(webhook_url, result_payload)

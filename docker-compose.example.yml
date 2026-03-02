@@ -88,7 +88,7 @@ services:
     image: ossrs/srs:6
     container_name: misty-isle-srs
     volumes:
-      - ./conf/srs.prod.conf:/usr/local/srs/conf/srs.conf:ro
+      - ./conf/srs.prod.conf:/usr/local/srs/conf/docker.conf:ro
     environment:
       # WebRTC 候选地址（改为你的服务器公网 IP）
       - CANDIDATE=0.0.0.0
