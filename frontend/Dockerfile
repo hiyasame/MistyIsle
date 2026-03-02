@@ -6,8 +6,9 @@ WORKDIR /app
 # 构建参数（环境变量）
 ARG VITE_API_BASE_URL
 ARG VITE_WS_BASE_URL
-ARG VITE_SRS_BASE_URL
 ARG VITE_CDN_BASE_URL
+ARG VITE_SRS_PUBLIC_HTTP_URL
+ARG VITE_SRS_PUBLIC_RTMP_URL
 
 # 复制 package.json 和 lock 文件
 COPY frontend/package*.json ./
