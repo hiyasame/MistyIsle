@@ -106,11 +106,9 @@ func getContentType(ext string) string {
 	return "video/mp4"
 }
 
-// VideoList 视频列表（仅当前用户）
+// VideoList 视频列表（返回所有未过期视频）
 func (h *Handler) VideoList(c *gin.Context) {
-	userID := c.GetUint64("userID")
-
-	videos, err := h.DB.GetVideosByUserID(userID)
+	videos, err := h.DB.GetAllVideos()
 	if err != nil {
 		h.Error(c, http.StatusInternalServerError, "failed to get videos")
 		return

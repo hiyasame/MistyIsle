@@ -17,6 +17,7 @@ type VideoDBInterface interface {
 	CreateVideo(video *model.Video) error
 	GetVideoByID(videoID uint64) (*model.Video, error)
 	GetVideosByUserID(userID uint64) ([]*model.Video, error)
+	GetAllVideos() ([]*model.Video, error)
 	UpdateVideo(videoID uint64, updates map[string]interface{}) error
 }
 

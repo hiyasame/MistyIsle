@@ -287,6 +287,38 @@ func (d *DB) GetVideosByUserID(userID uint64) ([]*model.Video, error) {
 	return videos, nil
 }
 
+// GetAllVideos 获取所有视频列表（不区分用户，自动过滤过期记录）
+func (d *DB) GetAllVideos() ([]*model.Video, error) {
+	sql := `
+		SELECT id, user_id, title, description, status, progress, r2_raw_key, original_size,
+			duration, hls_path, error_msg, expires_at, created_at, updated_at
+		FROM videos
+		WHERE (expires_at IS NULL OR expires_at > NOW())
+		ORDER BY created_at DESC
+	`
+	rows, err := d.pool.Query(context.Background(), sql)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var videos []*model.Video
+	for rows.Next() {
+		video := &model.Video{}
+		err := rows.Scan(
+			&video.ID, &video.UserID, &video.Title, &video.Description,
+			&video.Status, &video.Progress, &video.R2RawKey, &video.OriginalSize,
+			&video.Duration, &video.HLSPath, &video.ErrorMsg, &video.ExpiresAt,
+			&video.CreatedAt, &video.UpdatedAt,
+		)
+		if err != nil {
+			return nil, err
+		}
+		videos = append(videos, video)
+	}
+	return videos, nil
+}
+
 // UpdateVideo 更新视频信息
 func (d *DB) UpdateVideo(videoID uint64, updates map[string]interface{}) error {
 	if len(updates) == 0 {
