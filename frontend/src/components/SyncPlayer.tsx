@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, forwardRef, useImperativeHandle } from 'react';
+import {forwardRef, useEffect, useImperativeHandle, useRef, useState} from 'react';
 import Hls from 'hls.js';
 
 /**
@@ -79,7 +79,7 @@ const SyncPlayer = forwardRef<any, SyncPlayerProps>(({
     if (Hls.isSupported()) {
       const hls = new Hls({
         enableWorker: true,
-        lowLatencyMode: true, // 低延迟模式（适合直播）
+        lowLatencyMode: false, // 点播 HLS 不需要低延迟模式，开启会导致 fragParsingError
         backBufferLength: 90
       });
 

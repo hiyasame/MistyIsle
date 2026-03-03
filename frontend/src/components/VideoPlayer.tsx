@@ -1,6 +1,5 @@
-import { useEffect, useRef } from 'react';
+import {useEffect, useRef} from 'react';
 import Hls from 'hls.js';
-import { getPlayUrl } from '../utils/config';
 
 interface VideoPlayerProps {
   hlsPath: string;
@@ -25,7 +24,7 @@ export default function VideoPlayer({ hlsPath, poster, autoplay = false, control
     if (Hls.isSupported()) {
       const hls = new Hls({
         enableWorker: true,
-        lowLatencyMode: true,
+        lowLatencyMode: false, // 点播 HLS 不需要低延迟模式，开启会导致 fragParsingError
         backBufferLength: 90
       });
 
