@@ -1,4 +1,4 @@
-import {forwardRef, useEffect, useImperativeHandle, useRef, useState} from 'react';
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import Hls from 'hls.js';
 
 /**
@@ -85,7 +85,13 @@ const SyncPlayer = forwardRef<any, SyncPlayerProps>(({
       const hls = new Hls({
         enableWorker: true,
         lowLatencyMode: false, // 点播 HLS 不需要低延迟模式，开启会导致 fragParsingError
-        backBufferLength: 90
+        backBufferLength: 90,
+        maxBufferLength: 60,          // 增加缓冲区长度（秒）
+        maxMaxBufferLength: 120,      // 最大缓冲区上限
+        startLevel: -1,               // 自动选择起始码率
+        startFragPrefetch: true,       // 允许并行预加载下一个片段
+        capLevelToPlayerSize: false,   // 不根据播放器大小限制等级
+        maxFragLookUpTolerance: 0.25   // 提高片段查找容错
       });
 
       hlsRef.current = hls;
@@ -260,15 +266,26 @@ const SyncPlayer = forwardRef<any, SyncPlayerProps>(({
   }
 
   return (
-    <div style={{ position: 'relative', width: '100%', backgroundColor: '#000', borderRadius: '12px', overflow: 'hidden' }}>
+    <div style={{
+      position: 'relative',
+      width: '100%',
+      height: '100%',
+      backgroundColor: '#000',
+      borderRadius: '12px',
+      overflow: 'hidden',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center'
+    }}>
       <video
         ref={videoRef}
         controls={controls}
         playsInline
         style={{
-          width: '100%',
+          maxWidth: '100%',
           maxHeight: '75vh',
-          display: 'block'
+          display: 'block',
+          margin: '0 auto'
         }}
       />
       {!isReady && (

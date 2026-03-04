@@ -1,4 +1,4 @@
-import {useEffect, useRef} from 'react';
+import { useEffect, useRef } from 'react';
 import Hls from 'hls.js';
 
 interface VideoPlayerProps {
@@ -25,7 +25,13 @@ export default function VideoPlayer({ hlsPath, poster, autoplay = false, control
       const hls = new Hls({
         enableWorker: true,
         lowLatencyMode: false, // 点播 HLS 不需要低延迟模式，开启会导致 fragParsingError
-        backBufferLength: 90
+        backBufferLength: 90,
+        maxBufferLength: 60,          // 增加缓冲区长度（秒）
+        maxMaxBufferLength: 120,      // 最大缓冲区上限
+        startLevel: -1,               // 自动选择起始码率
+        startFragPrefetch: true,       // 允许并行预加载下一个片段
+        capLevelToPlayerSize: false,   // 不根据播放器大小限制等级
+        maxFragLookUpTolerance: 0.25   // 提高片段查找容错
       });
 
       hls.loadSource(hlsPath);
@@ -90,11 +96,27 @@ export default function VideoPlayer({ hlsPath, poster, autoplay = false, control
   }
 
   return (
-    <video
-      ref={videoRef}
-      controls={controls}
-      poster={poster}
-      style={{ width: '100%', maxHeight: '500px', backgroundColor: '#000' }}
-    />
+    <div style={{
+      width: '100%',
+      backgroundColor: '#000',
+      borderRadius: '12px',
+      overflow: 'hidden',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      aspectRatio: '16/9', // 默认比例，视频比例不同时会靠 flex 居中
+      maxHeight: '500px'
+    }}>
+      <video
+        ref={videoRef}
+        controls={controls}
+        poster={poster}
+        style={{
+          maxWidth: '100%',
+          maxHeight: '100%',
+          display: 'block'
+        }}
+      />
+    </div>
   );
 }
