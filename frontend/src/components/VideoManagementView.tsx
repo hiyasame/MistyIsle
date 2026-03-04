@@ -104,7 +104,7 @@ export default function VideoManagementView() {
         title,
         description: '',
         file_size: uploadFile.size,
-        file_ext: uploadFile.name.split('.').pop() || 'mp4'
+        file_ext: '.' + (uploadFile.name.split('.').pop() || 'mp4')
       });
 
       if (initRes.code !== 0) {
