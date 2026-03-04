@@ -102,10 +102,17 @@ export const userApi = {
   }
 };
 
+type VideoInitResponseData = {
+    video_id: string;
+    presigned_url: string;
+    r2_key: string;
+    expires_in: number;
+}
+
 // 视频相关 API
 export const videoApi = {
   // 初始化上传
-  async init(data: { title: string; file_size: number; file_ext: string; description?: string }): Promise<ApiResponse<any>> {
+  async init(data: { title: string; file_size: number; file_ext: string; description?: string }): Promise<ApiResponse<VideoInitResponseData>> {
     return request('/video/init', {
       method: 'POST',
       body: JSON.stringify(data)

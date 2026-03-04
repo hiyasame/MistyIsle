@@ -111,11 +111,11 @@ export default function VideoManagementView() {
         throw new Error(initRes.error || 'Init failed');
       }
 
-      const { video_id, upload_url } = initRes.data;
+      const { video_id, presigned_url } = initRes.data;
 
       // 2. 直接上传到 R2
       setUploadStep('uploading');
-      const uploadResponse = await fetch(upload_url, {
+      const uploadResponse = await fetch(presigned_url, {
         method: 'PUT',
         body: uploadFile,
         headers: {
