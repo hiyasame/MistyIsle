@@ -73,7 +73,7 @@ export const userApi = {
   },
 
   // 更新个人信息
-  async updateProfile(data: { username?: string; avatar?: string }): Promise<ApiResponse<User>> {
+  async updateProfile(data: { username?: string; avatar?: string; bio?: string }): Promise<ApiResponse<User>> {
     return request<User>('/user/profile', {
       method: 'PUT',
       body: JSON.stringify(data)

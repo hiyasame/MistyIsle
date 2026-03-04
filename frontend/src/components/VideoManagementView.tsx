@@ -100,10 +100,11 @@ export default function VideoManagementView() {
 
       // 1. 初始化上传
       const title = uploadTitle.trim() || uploadFile.name;
-      const initRes = await videoApi.initUpload({
+      const initRes = await videoApi.init({
         title,
         description: '',
-        file_size: uploadFile.size
+        file_size: uploadFile.size,
+        file_ext: uploadFile.name.split('.').pop() || 'mp4'
       });
 
       if (initRes.code !== 0) {
@@ -130,7 +131,7 @@ export default function VideoManagementView() {
 
       // 3. 触发处理
       setUploadStep('processing');
-      const processRes = await videoApi.processVideo(video_id);
+      const processRes = await videoApi.process(video_id);
 
       if (processRes.code !== 0) {
         throw new Error(processRes.error || 'Process failed');
@@ -160,7 +161,7 @@ export default function VideoManagementView() {
     if (!confirm('确定要删除这个视频吗？')) return;
 
     try {
-      const res = await videoApi.deleteVideo(videoId);
+      const res = await videoApi.delete(videoId);
       if (res.code === 0) {
         setVideos(prev => prev.filter(v => v.video_id !== videoId));
         if (previewVideo?.video_id === videoId) {
