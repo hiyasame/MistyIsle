@@ -93,8 +93,9 @@ func serve(conf *cfg.Config, h *handler.Handler, wsHub *websocket.Hub, database 
 		room.GET("/list", h.RoomList)
 		room.GET("/:id", h.RoomGet)
 		// join/leave 通过 WebSocket 连接/断开自动处理
-		room.POST("/:id/play", h.RoomPlayVideo(wsHub))        // 播放指定视频（房主）
+		room.POST("/:id/play", h.RoomPlayVideo(wsHub))        // 播放指定视频
 		room.POST("/:id/transfer", h.RoomTransferHost(wsHub)) // 移交房主权限
+		room.DELETE("/:id", h.RoomDelete(wsHub))              // 删除房间（仅当房间无人时）
 	}
 
 	// 视频服务
@@ -106,6 +107,7 @@ func serve(conf *cfg.Config, h *handler.Handler, wsHub *websocket.Hub, database 
 		video.GET("/list", middleware.Auth(*conf), h.VideoList)
 		video.GET("/:id", middleware.Auth(*conf), h.VideoGet)
 		video.GET("/:id/status", middleware.Auth(*conf), h.VideoStatus)
+		video.DELETE("/:id", middleware.Auth(*conf), h.VideoDelete) // 删除视频
 
 		// Webhook（无需认证）
 		video.POST("/webhook", h.VideoWebhook) // Modal 回调接口

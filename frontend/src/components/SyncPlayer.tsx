@@ -27,6 +27,8 @@ const SyncPlayer = forwardRef<any, SyncPlayerProps>(({
   const [isReady, setIsReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const actionFromRemoteRef = useRef(false); // 标记是否来自远程控制
+  const localPausedRef = useRef(false); // 用户主动暂停锁，防止响应远程播放指令
+  const isLoadingRef = useRef(false); // 标记视频是否正在加载（waiting/seeking状态）
   const lastSentActionRef = useRef<{ action: string; time: number; playing: boolean; timestamp: number } | null>(null);
 
   // 暴露 handleRemoteAction 给父组件
@@ -41,10 +43,13 @@ const SyncPlayer = forwardRef<any, SyncPlayerProps>(({
 
       // 1. 同步播放/暂停状态
       if (data.playing !== undefined) {
-        if (data.playing && video.paused) {
+        // 如果用户主动暂停，不响应远程播放指令
+        if (data.playing && video.paused && !localPausedRef.current) {
           video.play().catch(() => { });
         } else if (!data.playing && !video.paused) {
           video.pause();
+          // 远程暂停时清除本地暂停锁（允许之后的播放指令）
+          localPausedRef.current = false;
         }
       }
 
@@ -150,7 +155,8 @@ const SyncPlayer = forwardRef<any, SyncPlayerProps>(({
     const sendAction = (action: string) => {
       const now = Date.now();
       const time = video.currentTime;
-      const playing = !video.paused;
+      // 如果视频正在加载，强制发送暂停状态
+      const playing = isLoadingRef.current ? false : !video.paused;
       const last = lastSentActionRef.current;
 
       // 关键动作处理：如果播放状态改变了 (play -> pause 或 pause -> play)，则立即发送，不进行限流
@@ -170,6 +176,8 @@ const SyncPlayer = forwardRef<any, SyncPlayerProps>(({
         actionFromRemoteRef.current = false;
         return;
       }
+      // 用户主动播放，清除暂停锁
+      localPausedRef.current = false;
       sendAction('sync');
     };
 
@@ -178,6 +186,8 @@ const SyncPlayer = forwardRef<any, SyncPlayerProps>(({
         actionFromRemoteRef.current = false;
         return;
       }
+      // 用户主动暂停，设置暂停锁
+      localPausedRef.current = true;
       sendAction('sync');
     };
 
@@ -189,19 +199,42 @@ const SyncPlayer = forwardRef<any, SyncPlayerProps>(({
       sendAction('sync');
     };
 
+    const handleWaiting = () => {
+      // 视频正在缓冲，标记为加载中
+      isLoadingRef.current = true;
+      sendAction('sync'); // 立即发送暂停状态
+    };
+
+    const handleCanPlay = () => {
+      // 视频可以播放了，清除加载标记
+      isLoadingRef.current = false;
+      sendAction('sync'); // 恢复正常状态
+    };
+
+    const handleSeeking = () => {
+      // 拖动进度条时，标记为加载中
+      isLoadingRef.current = true;
+    };
+
     video.addEventListener('play', handlePlay);
     video.addEventListener('pause', handlePause);
     video.addEventListener('seeked', handleSeeked);
+    video.addEventListener('waiting', handleWaiting);
+    video.addEventListener('canplay', handleCanPlay);
+    video.addEventListener('seeking', handleSeeking);
 
-    // 每 5 秒自动同步一次状态（即使没有操作）
+    // 每 2 秒自动同步一次状态（即使没有操作）
     const syncInterval = setInterval(() => {
       sendAction('sync');
-    }, 5000);
+    }, 2000);
 
     return () => {
       video.removeEventListener('play', handlePlay);
       video.removeEventListener('pause', handlePause);
       video.removeEventListener('seeked', handleSeeked);
+      video.removeEventListener('waiting', handleWaiting);
+      video.removeEventListener('canplay', handleCanPlay);
+      video.removeEventListener('seeking', handleSeeking);
       clearInterval(syncInterval);
     };
   }, [isHost, isReady, onHostAction]);

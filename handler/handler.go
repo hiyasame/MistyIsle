@@ -18,6 +18,7 @@ type VideoDBInterface interface {
 	GetVideoByID(videoID uint64) (*model.Video, error)
 	GetVideosByUserID(userID uint64) ([]*model.Video, error)
 	UpdateVideo(videoID uint64, updates map[string]interface{}) error
+	DeleteVideo(videoID uint64, userID uint64) error
 }
 
 // Handler 包含所有依赖

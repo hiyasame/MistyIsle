@@ -1,11 +1,13 @@
 package websocket
 
 import (
+	"context"
 	"encoding/json"
 	"log"
 	"misty-isle/service"
 	"misty-isle/utils"
 	"sync"
+	"time"
 )
 
 // Hub 管理所有 WebSocket 连接
@@ -25,7 +27,9 @@ type Hub struct {
 	register chan *Client
 	// 注销客户端
 	unregister chan *Client
-	mu         sync.RWMutex
+	// 延迟清理任务（用户ID_房间ID -> 取消函数）
+	pendingCleanups map[string]context.CancelFunc
+	mu              sync.RWMutex
 }
 
 // UserNotification 用户级通知（不依赖房间）
@@ -51,13 +55,14 @@ var hostOnlyActions = map[string]bool{
 
 func NewHub(roomService *service.RoomService) *Hub {
 	return &Hub{
-		rooms:       make(map[string]utils.Set[*Client]),
-		users:       make(map[string]utils.Set[*Client]),
-		roomService: roomService,
-		broadcast:   make(chan *RoomMessage, 100),
-		userNotify:  make(chan *UserNotification, 100),
-		register:    make(chan *Client, 100),
-		unregister:  make(chan *Client, 100),
+		rooms:           make(map[string]utils.Set[*Client]),
+		users:           make(map[string]utils.Set[*Client]),
+		roomService:     roomService,
+		broadcast:       make(chan *RoomMessage, 100),
+		userNotify:      make(chan *UserNotification, 100),
+		register:        make(chan *Client, 100),
+		unregister:      make(chan *Client, 100),
+		pendingCleanups: make(map[string]context.CancelFunc),
 	}
 }
 
@@ -126,7 +131,16 @@ func (h *Hub) Run() {
 		case client := <-h.unregister:
 			h.mu.Lock()
 			roomID := client.roomID
-			// 从房间移除
+			cleanupKey := client.userID + "_" + roomID
+
+			// 取消该用户在该房间的任何待执行清理任务（如果用户重连了）
+			if cancelFunc, exists := h.pendingCleanups[cleanupKey]; exists {
+				cancelFunc()
+				delete(h.pendingCleanups, cleanupKey)
+				log.Printf("[Hub] Cancelled pending cleanup for %s in room %s (reconnected)", client.userID, roomID)
+			}
+
+			// 立即从 WebSocket 连接池移除
 			if clients, ok := h.rooms[roomID]; ok {
 				delete(clients, client)
 				if len(clients) == 0 {
@@ -134,33 +148,65 @@ func (h *Hub) Run() {
 				}
 			}
 
-			// 从用户连接池移除
 			if clients, ok := h.users[client.userID]; ok {
 				delete(clients, client)
 				if len(clients) == 0 {
 					delete(h.users, client.userID)
 				}
 			}
-			h.mu.Unlock()
 			close(client.send)
-			log.Printf("Client %s left room %s", client.userID, roomID)
+			log.Printf("[Hub] Client %s disconnected from room %s, waiting 5s before cleanup...", client.userID, roomID)
+			h.mu.Unlock()
 
-			// 通过 RoomService 处理离开逻辑（自动转让房主、删除空房间）
-			isEmpty, newHostID := h.roomService.LeaveRoom(roomID, client.userID)
+			// 启动5秒延迟清理任务
+			ctx, cancel := context.WithCancel(context.Background())
+			h.mu.Lock()
+			h.pendingCleanups[cleanupKey] = cancel
+			h.mu.Unlock()
 
-			// 广播房间人员变动
-			if !isEmpty {
-				h.broadcastPeopleChange(roomID)
+			go func(userID, roomID string) {
+				select {
+				case <-time.After(5 * time.Second):
+					// 5秒后，执行真正的离开房间逻辑
+					log.Printf("[Hub] Timeout reached, processing leave for %s in room %s", userID, roomID)
 
-				if newHostID != "" {
-					// 房主变更，广播给所有人
-					h.broadcast <- &RoomMessage{
-						RoomID: roomID,
-						Action: "host_transfer",
-						Data:   mustJSON(map[string]string{"new_host_id": newHostID}),
+					h.mu.Lock()
+					delete(h.pendingCleanups, cleanupKey)
+					h.mu.Unlock()
+
+					// 检查用户是否已经重连（通过检查 users 映射）
+					h.mu.RLock()
+					reconnected := len(h.users[userID]) > 0
+					h.mu.RUnlock()
+
+					if reconnected {
+						log.Printf("[Hub] User %s reconnected, skipping cleanup", userID)
+						return
 					}
+
+					// 通过 RoomService 处理离开逻辑（自动转让房主、删除空房间）
+					isEmpty, newHostID := h.roomService.LeaveRoom(roomID, userID)
+
+					// 广播房间人员变动
+					if !isEmpty {
+						h.broadcastPeopleChange(roomID)
+
+						if newHostID != "" {
+							// 房主变更，广播给所有人
+							h.broadcast <- &RoomMessage{
+								RoomID: roomID,
+								Action: "host_transfer",
+								Data:   mustJSON(map[string]string{"new_host_id": newHostID}),
+							}
+							log.Printf("[Hub] Host transferred to %s in room %s", newHostID, roomID)
+						}
+					}
+
+				case <-ctx.Done():
+					// 用户重连，取消清理
+					log.Printf("[Hub] Cleanup cancelled for %s in room %s (user reconnected)", userID, roomID)
 				}
-			}
+			}(client.userID, roomID)
 
 		case notify := <-h.userNotify:
 			if notify == nil {
@@ -315,6 +361,7 @@ func (h *Hub) broadcastPeopleChange(roomID string) {
 				"user_id":  client.userID,
 				"username": client.username,
 				"avatar":   client.avatar,
+				"bio":      client.bio,
 				"is_host":  h.roomService.GetHost(roomID) == client.userID,
 			}
 		}

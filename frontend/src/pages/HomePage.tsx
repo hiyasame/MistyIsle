@@ -173,6 +173,7 @@ export default function HomePage() {
                   key={room.room_id}
                   room={room}
                   onJoin={handleJoinRoom}
+                  onDelete={loadRooms}
                 />
               ))}
             </div>
@@ -295,7 +296,27 @@ export default function HomePage() {
   );
 }
 
-function RoomCard({ room, onJoin }: { room: Room; onJoin: (roomId: string) => void }) {
+function RoomCard({ room, onJoin, onDelete }: { room: Room; onJoin: (roomId: string) => void; onDelete: () => void }) {
+  const [deleting, setDeleting] = useState(false);
+
+  const handleDelete = async (e: React.MouseEvent) => {
+    e.stopPropagation(); // 阻止冒泡，避免触发进入房间
+
+    if (!confirm('确定要删除这个房间吗？此操作不可撤销。')) return;
+
+    try {
+      setDeleting(true);
+      await roomApi.delete(room.room_id);
+      alert('房间已删除');
+      onDelete(); // 刷新列表
+    } catch (err) {
+      console.error('Failed to delete room:', err);
+      alert(`删除房间失败: ${err instanceof Error ? err.message : 'Unknown error'}`);
+    } finally {
+      setDeleting(false);
+    }
+  };
+
   return (
     <div
       onClick={() => onJoin(room.room_id)}
@@ -373,6 +394,32 @@ function RoomCard({ room, onJoin }: { room: Room; onJoin: (roomId: string) => vo
         }}>
           正在播放: {room.current_video.title || '未命名视频'}
         </div>
+      )}
+
+      {/* 删除按钮（仅当房间无人时显示） */}
+      {(room.user_count === 0) && (
+        <button
+          onClick={handleDelete}
+          disabled={deleting}
+          style={{
+            marginTop: '0.75rem',
+            width: '100%',
+            padding: '0.5rem',
+            backgroundColor: '#dc2626',
+            color: 'white',
+            border: 'none',
+            borderRadius: '6px',
+            cursor: deleting ? 'not-allowed' : 'pointer',
+            fontSize: '0.875rem',
+            fontWeight: '500',
+            transition: 'background-color 0.2s',
+            opacity: deleting ? 0.5 : 1
+          }}
+          onMouseEnter={(e) => !deleting && (e.currentTarget.style.backgroundColor = '#b91c1c')}
+          onMouseLeave={(e) => !deleting && (e.currentTarget.style.backgroundColor = '#dc2626')}
+        >
+          {deleting ? '删除中...' : '🗑️ 删除房间'}
+        </button>
       )}
     </div>
   );

@@ -187,10 +187,8 @@ export default function RoomPage() {
     sendMessage(action, data);
   }, [isHost, sendMessage]);
 
-  // 房主操作：切换视频
+  // 切换视频（任何人都可以操作）
   const handleChangeVideo = useCallback(async (video: Video) => {
-    if (!isHost) return;
-
     try {
       await roomApi.playVideo(roomId || '', video.video_id);
       setCurrentVideo(video);
@@ -199,7 +197,7 @@ export default function RoomPage() {
       console.error('Failed to play video:', err);
       alert(`切换视频失败: ${err instanceof Error ? err.message : 'Unknown error'}`);
     }
-  }, [isHost, roomId]);
+  }, [roomId]);
 
   // 房主操作：移交权限
   const handleTransferHost = useCallback(async (targetUserId: string) => {
@@ -215,6 +213,7 @@ export default function RoomPage() {
       alert(`移交权限失败: ${err instanceof Error ? err.message : 'Unknown error'}`);
     }
   }, [isHost, userId, roomId]);
+
 
   if (loading) {
     return (
@@ -305,29 +304,27 @@ export default function RoomPage() {
         </div>
 
         <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
-          {isHost && (
-            <button
-              onClick={() => setShowVideoLibrary(!showVideoLibrary)}
-              style={{
-                padding: '0.6rem 1.25rem',
-                backgroundColor: '#3b82f6',
-                color: 'white',
-                border: 'none',
-                borderRadius: '8px',
-                cursor: 'pointer',
-                fontSize: '0.875rem',
-                fontWeight: '500',
-                transition: 'all 0.2s',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '0.5rem'
-              }}
-              onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#2563eb'}
-              onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#3b82f6'}
-            >
-              📹 {showVideoLibrary ? '关闭视频库' : '选择视频'}
-            </button>
-          )}
+          <button
+            onClick={() => setShowVideoLibrary(!showVideoLibrary)}
+            style={{
+              padding: '0.6rem 1.25rem',
+              backgroundColor: '#3b82f6',
+              color: 'white',
+              border: 'none',
+              borderRadius: '8px',
+              cursor: 'pointer',
+              fontSize: '0.875rem',
+              fontWeight: '500',
+              transition: 'all 0.2s',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.5rem'
+            }}
+            onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#2563eb'}
+            onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#3b82f6'}
+          >
+            📹 {showVideoLibrary ? '关闭视频库' : '选择视频'}
+          </button>
 
           <button
             onClick={() => window.open('/upload', '_blank')}
@@ -406,32 +403,30 @@ export default function RoomPage() {
                   </p>
                 )}
                 <p style={{ fontSize: '1.125rem', color: '#cbd5e1', marginBottom: '1.5rem' }}>
-                  {isHost ? '房间已准备就绪' : '等待房主操作...'}
+                  房间已准备就绪
                 </p>
-                {isHost && (
-                  <button
-                    onClick={() => setShowVideoLibrary(true)}
-                    style={{
-                      padding: '0.875rem 2rem',
-                      backgroundColor: '#3b82f6',
-                      color: 'white',
-                      border: 'none',
-                      borderRadius: '8px',
-                      cursor: 'pointer',
-                      fontSize: '1.125rem',
-                      fontWeight: '600',
-                      transition: 'background-color 0.2s'
-                    }}
-                    onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#2563eb'}
-                    onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#3b82f6'}
-                  >
-                    📹 选择视频开始观影
-                  </button>
-                )}
+                <button
+                  onClick={() => setShowVideoLibrary(true)}
+                  style={{
+                    padding: '0.875rem 2rem',
+                    backgroundColor: '#3b82f6',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '8px',
+                    cursor: 'pointer',
+                    fontSize: '1.125rem',
+                    fontWeight: '600',
+                    transition: 'background-color 0.2s'
+                  }}
+                  onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#2563eb'}
+                  onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#3b82f6'}
+                >
+                  📹 选择视频开始观影
+                </button>
               </div>
 
               {/* 推流信息 */}
-              {isHost && room?.stream_path && (
+              {room?.stream_path && (
                 <div style={{
                   backgroundColor: '#334155',
                   padding: '1.5rem',

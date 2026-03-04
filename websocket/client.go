@@ -39,6 +39,7 @@ type Client struct {
 	userID   string
 	avatar   string
 	username string
+	bio      string
 	isHost   bool // 是否是房主
 }
 
@@ -113,6 +114,7 @@ func ServeWs(hub *Hub, c *gin.Context, database *db.DB, conf *cfg.Config) {
 		userID:   userIDStr, // 必须使用真实的数字 ID（的字符串形式），前后端校验才会通过
 		username: user.Username,
 		avatar:   user.Avatar,
+		bio:      user.Bio,
 	}
 
 	client.hub.register <- client

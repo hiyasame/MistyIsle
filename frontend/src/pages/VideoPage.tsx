@@ -144,6 +144,22 @@ export default function VideoPage() {
     return { text, color };
   };
 
+  // 删除视频
+  const handleDeleteVideo = async (videoId: string, e: React.MouseEvent) => {
+    e.stopPropagation(); // 阻止触发预览
+
+    if (!confirm('确定要删除这个视频吗？此操作不可撤销。')) return;
+
+    try {
+      await videoApi.delete(videoId);
+      alert('视频已删除');
+      fetchVideos(); // 刷新列表
+    } catch (err) {
+      console.error('Failed to delete video:', err);
+      alert(`删除视频失败: ${err instanceof Error ? err.message : 'Unknown error'}`);
+    }
+  };
+
   return (
     <div style={{
       minHeight: '100vh',
@@ -384,6 +400,28 @@ export default function VideoPage() {
                           {video.error_msg}
                         </p>
                       )}
+
+                      {/* 删除按钮 */}
+                      <button
+                        onClick={(e) => handleDeleteVideo(String(video.video_id), e)}
+                        style={{
+                          marginTop: '0.75rem',
+                          width: '100%',
+                          padding: '0.5rem',
+                          backgroundColor: '#dc2626',
+                          color: 'white',
+                          border: 'none',
+                          borderRadius: '8px',
+                          cursor: 'pointer',
+                          fontSize: '0.75rem',
+                          fontWeight: '600',
+                          transition: 'background-color 0.2s'
+                        }}
+                        onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#b91c1c'}
+                        onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#dc2626'}
+                      >
+                        🗑️ 删除
+                      </button>
                     </div>
                   </div>
                 );

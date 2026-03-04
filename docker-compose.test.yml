@@ -4,14 +4,14 @@
 
 services:
   postgres:
-    image: postgres:16-alpine
+    image: docker.1ms.run/postgres:16-alpine
     container_name: misty-isle-postgres
     restart: unless-stopped
     ports:
       - "5432:5432"
     environment:
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
+      POSTGRES_PASSWORD: ghy030608
       POSTGRES_DB: misty_isle
     volumes:
       - misty_pg_data:/var/lib/postgresql/data
@@ -22,7 +22,7 @@ services:
       retries: 5
 
   redis:
-    image: redis:7-alpine
+    image: docker.1ms.run/redis:7-alpine
     container_name: misty-isle-redis
     restart: unless-stopped
     ports:

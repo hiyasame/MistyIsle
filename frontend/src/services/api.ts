@@ -163,6 +163,13 @@ export const videoApi = {
   // 获取视频详情
   async detail(videoId: string): Promise<ApiResponse<Video>> {
     return request<Video>(`/video/${videoId}`);
+  },
+
+  // 删除视频
+  async delete(videoId: string): Promise<ApiResponse<any>> {
+    return request(`/video/${videoId}`, {
+      method: 'DELETE'
+    });
   }
 };
 
@@ -198,7 +205,14 @@ export const roomApi = {
   async transferHost(roomId: string, userId: string): Promise<ApiResponse<any>> {
     return request(`/room/${roomId}/transfer`, {
       method: 'POST',
-      body: JSON.stringify({ to_user_id: userId })
+      body: JSON.stringify({ new_host_id: userId })
+    });
+  },
+
+  // 删除房间
+  async delete(roomId: string): Promise<ApiResponse<any>> {
+    return request(`/room/${roomId}`, {
+      method: 'DELETE'
     });
   }
 };

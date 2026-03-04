@@ -311,6 +311,19 @@ func (d *DB) UpdateVideo(videoID uint64, updates map[string]interface{}) error {
 	return err
 }
 
+// DeleteVideo 删除视频记录（仅删除数据库记录，不删除 R2 文件）
+func (d *DB) DeleteVideo(videoID uint64, userID uint64) error {
+	sql := `DELETE FROM videos WHERE id = $1 AND user_id = $2`
+	result, err := d.pool.Exec(context.Background(), sql, videoID, userID)
+	if err != nil {
+		return err
+	}
+	if result.RowsAffected() == 0 {
+		return pgx.ErrNoRows
+	}
+	return nil
+}
+
 // CleanupExpiredVideos 清理过期视频记录（定时任务调用）
 func (d *DB) CleanupExpiredVideos() (int64, error) {
 	sql := `DELETE FROM videos WHERE expires_at IS NOT NULL AND expires_at <= NOW()`

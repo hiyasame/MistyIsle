@@ -171,13 +171,22 @@ func (s *UserService) UpdateUser(userID uint64, req *model.UserUpdateRequest) er
 		if len(*req.Username) < 3 || len(*req.Username) > 32 {
 			return fmt.Errorf("username length must be 3-32")
 		}
-		// 检查用户名是否已存在
-		exists, err := s.db.CheckUsernameExists(*req.Username)
+
+		// 获取当前用户信息，检查用户名是否真的改变了
+		currentUser, err := s.db.GetUserByID(userID)
 		if err != nil {
-			return fmt.Errorf("database error: %w", err)
+			return fmt.Errorf("failed to get current user: %w", err)
 		}
-		if exists {
-			return fmt.Errorf("username already taken")
+
+		// 只有当用户名真的改变时才检查是否重复
+		if *req.Username != currentUser.Username {
+			exists, err := s.db.CheckUsernameExists(*req.Username)
+			if err != nil {
+				return fmt.Errorf("database error: %w", err)
+			}
+			if exists {
+				return fmt.Errorf("username already taken")
+			}
 		}
 		updates["username"] = *req.Username
 	}

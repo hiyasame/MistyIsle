@@ -3,6 +3,7 @@ package handler
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"strconv"
 	"time"
@@ -66,10 +67,6 @@ func (h *Handler) RoomGet(c *gin.Context) {
 
 	players := h.RoomService.GetRoomUsers(roomID)
 
-	// 获取当前请求的用户 ID
-	currentUserIDUint, _ := c.Get("userID")
-	currentUserID := fmt.Sprintf("%v", currentUserIDUint)
-
 	response := gin.H{
 		"room_id":      room.ID,
 		"name":         room.Name,
@@ -83,11 +80,9 @@ func (h *Handler) RoomGet(c *gin.Context) {
 	// 状态和视频信息
 	response["status"] = room.Status
 
-	// 只有房主才能看到推流信息
-	if room.HostID == currentUserID {
-		response["stream_path"] = room.StreamPath // /live?key=SECRET
-		response["stream_key"] = room.ID          // ROOMID
-	}
+	// 推流信息所有人可见
+	response["stream_path"] = room.StreamPath // /live?key=SECRET
+	response["stream_key"] = room.ID          // ROOMID
 
 	// 如果正在播放视频或直播，返回统一的 current_video 结构
 	if room.Status == model.RoomStatusPlayingVOD && room.VideoPath != "" {
@@ -132,11 +127,7 @@ func (h *Handler) RoomPlayVideo(hub *websocket.Hub) gin.HandlerFunc {
 			return
 		}
 
-		// 验证用户是房主
-		if !hub.IsHost(roomID, userID) {
-			h.Error(c, http.StatusForbidden, "only host can play video")
-			return
-		}
+		// 任何人都可以选择视频播放（移除房主限制）
 
 		// 从数据库获取真实视频信息，获取正确的 m3u8 路径
 		videoIDUint, _ := strconv.ParseUint(req.VideoID, 10, 64)
@@ -170,6 +161,35 @@ func (h *Handler) RoomPlayVideo(hub *websocket.Hub) gin.HandlerFunc {
 
 		h.Success(c, gin.H{
 			"video": videoData,
+		})
+	}
+}
+
+// RoomDelete 删除房间（仅当房间无人时允许删除）
+func (h *Handler) RoomDelete(hub *websocket.Hub) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		roomID := c.Param("id")
+
+		// 检查房间是否存在
+		_, ok := hub.GetRoomService().GetRoom(roomID)
+		if !ok {
+			h.Error(c, http.StatusNotFound, "room not found")
+			return
+		}
+
+		// 检查房间是否为空（无在线用户）
+		users := hub.GetRoomService().GetRoomUsers(roomID)
+		if len(users) > 0 {
+			h.Error(c, http.StatusForbidden, "cannot delete room with active users")
+			return
+		}
+
+		// 删除房间
+		hub.GetRoomService().DeleteRoom(roomID)
+		log.Printf("[RoomDelete] Room %s deleted", roomID)
+
+		h.Success(c, gin.H{
+			"message": "room deleted successfully",
 		})
 	}
 }

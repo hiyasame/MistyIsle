@@ -404,3 +404,26 @@ func (h *Handler) VideoStatus(c *gin.Context) {
 		"error_msg":  video.ErrorMsg,
 	})
 }
+
+// VideoDelete 删除视频（仅删除数据库记录，不删除 R2 文件）
+func (h *Handler) VideoDelete(c *gin.Context) {
+	userID := c.GetUint64("userID")
+	videoIDStr := c.Param("id")
+
+	videoID, err := strconv.ParseUint(videoIDStr, 10, 64)
+	if err != nil {
+		h.Error(c, http.StatusBadRequest, "invalid video id")
+		return
+	}
+
+	// 删除视频（自动检查所有权）
+	err = h.DB.DeleteVideo(videoID, userID)
+	if err != nil {
+		h.Error(c, http.StatusNotFound, "video not found or access denied")
+		return
+	}
+
+	h.Success(c, gin.H{
+		"message": "video deleted successfully",
+	})
+}

@@ -4,6 +4,7 @@ export interface User {
   username: string;
   email: string;
   avatar?: string;
+  bio?: string;
   created_at: string;
 }
 
@@ -64,6 +65,7 @@ export interface RoomUser {
   user_id: string;
   username: string;
   avatar?: string;
+  bio?: string;
   is_host: boolean;
 }
 
