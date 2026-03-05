@@ -234,6 +234,12 @@ func (h *Hub) Run() {
 			clients := h.rooms[msg.RoomID]
 			h.mu.RUnlock()
 
+			// 处理停止播放（任何人都可以操作）
+			if msg.Action == "stop_playback" {
+				h.roomService.StopPlayback(msg.RoomID)
+				log.Printf("[Hub] User %s stopped playback in room %s", msg.From, msg.RoomID)
+			}
+
 			// 检查权限
 			if hostOnlyActions[msg.Action] {
 				hostID := h.roomService.GetHost(msg.RoomID)
@@ -260,9 +266,9 @@ func (h *Hub) Run() {
 
 			data, _ := json.Marshal(msg)
 			for client := range clients {
-				// 对于 people_change 和 host_transfer，必须发给所有人（包括发送者自己）
+				// 对于 people_change、host_transfer 和 stop_playback，必须发给所有人（包括发送者自己）
 				// 对于普通的播放控制同步消息（play, pause, seek, sync），不发给发送者自己以免引起回环状态冲突
-				isSyncAction := msg.Action == "people_change" || msg.Action == "host_transfer"
+				isSyncAction := msg.Action == "people_change" || msg.Action == "host_transfer" || msg.Action == "stop_playback"
 				if !isSyncAction && client.userID == msg.From {
 					continue
 				}

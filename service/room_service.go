@@ -250,6 +250,24 @@ func (rm *RoomService) VideoEnded(roomID string) (nextVideoID string, hasNext bo
 	return "", false
 }
 
+// StopPlayback 停止播放（无论是 VOD 还是直播）
+func (rm *RoomService) StopPlayback(roomID string) bool {
+	rm.mu.Lock()
+	defer rm.mu.Unlock()
+
+	room, ok := rm.rooms[roomID]
+	if !ok {
+		return false
+	}
+
+	// 回到idle状态
+	room.Status = model.RoomStatusIdle
+	room.VideoID = ""
+	room.VideoName = ""
+	room.VideoPath = ""
+	return true
+}
+
 // DeleteRoom 删除房间
 func (rm *RoomService) DeleteRoom(id string) {
 	rm.mu.Lock()

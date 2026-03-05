@@ -149,6 +149,10 @@ export default function RoomView() {
         setCurrentVideo(null);
         break;
 
+      case 'stop_playback':
+        setCurrentVideo(null);
+        break;
+
       default:
         console.warn('Unknown action:', data.action);
     }
@@ -182,6 +186,13 @@ export default function RoomView() {
       alert(`切换视频失败: ${err instanceof Error ? err.message : 'Unknown error'}`);
     }
   }, [roomId]);
+
+  // 停止播放（任何人都可以操作）
+  const handleStopPlayback = useCallback(() => {
+    if (!currentVideo) return;
+    sendMessage('stop_playback', {});
+    setCurrentVideo(null);
+  }, [currentVideo, sendMessage]);
 
   // 房主操作：移交权限
   const handleTransferHost = useCallback(async (targetUserId: string) => {
@@ -275,6 +286,27 @@ export default function RoomView() {
           }}>
             {isConnected ? '● 已连接' : '● 断开'}
           </div>
+
+          {currentVideo && (
+            <button
+              onClick={handleStopPlayback}
+              style={{
+                padding: '6px 12px',
+                backgroundColor: '#f23f43',
+                color: 'white',
+                border: 'none',
+                borderRadius: '4px',
+                fontSize: '0.875rem',
+                fontWeight: '600',
+                cursor: 'pointer',
+                transition: 'background-color 0.2s'
+              }}
+              onMouseOver={(e) => e.currentTarget.style.backgroundColor = '#c93437'}
+              onMouseOut={(e) => e.currentTarget.style.backgroundColor = '#f23f43'}
+            >
+              ⏹ 停止播放
+            </button>
+          )}
 
           <button
             onClick={() => setShowVideoLibrary(!showVideoLibrary)}

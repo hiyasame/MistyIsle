@@ -116,7 +116,8 @@ export type RoomAction =
   | 'change_video'
   | 'host_transfer'
   | 'live_started'
-  | 'live_ended';
+  | 'live_ended'
+  | 'stop_playback';
 
 // API 响应
 export interface ApiResponse<T = any> {
