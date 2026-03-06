@@ -53,8 +53,8 @@ const SyncPlayer = forwardRef<any, SyncPlayerProps>(({
         }
       }
 
-      // 2. 同步进度 (误差检测)
-      if (data.time !== undefined) {
+      // 2. 同步进度（手动暂停中不跟随进度）
+      if (data.time !== undefined && !localPausedRef.current) {
         const drift = Math.abs(video.currentTime - data.time);
         // 如果误差大于 1.5 秒，强制对齐
         if (drift > 1.5) {
@@ -151,6 +151,35 @@ const SyncPlayer = forwardRef<any, SyncPlayerProps>(({
       }
     };
   }, [hlsPath, autoplay, onReady]);
+
+  // 非房主：监听本地手动暂停/播放，维护 localPausedRef
+  useEffect(() => {
+    if (isHost || !videoRef.current || !isReady) return;
+
+    const video = videoRef.current;
+
+    const handlePause = () => {
+      // 远程操作导致的暂停不算手动暂停
+      if (actionFromRemoteRef.current) return;
+      localPausedRef.current = true;
+      console.log('[SyncPlayer] Guest manually paused, ignoring remote sync until resumed');
+    };
+
+    const handlePlay = () => {
+      // 远程操作导致的播放不清除锁
+      if (actionFromRemoteRef.current) return;
+      localPausedRef.current = false;
+      console.log('[SyncPlayer] Guest manually resumed, re-following host');
+    };
+
+    video.addEventListener('pause', handlePause);
+    video.addEventListener('play', handlePlay);
+
+    return () => {
+      video.removeEventListener('pause', handlePause);
+      video.removeEventListener('play', handlePlay);
+    };
+  }, [isHost, isReady]);
 
   // 房主控制：监听播放器事件并上报
   useEffect(() => {

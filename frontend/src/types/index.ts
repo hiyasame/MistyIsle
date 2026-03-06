@@ -69,6 +69,28 @@ export interface RoomUser {
   is_host: boolean;
 }
 
+// 聊天消息回复引用
+export interface ChatReplyTo {
+  id: string;
+  username: string;
+  content: string;
+  image_url?: string;
+}
+
+// 聊天消息
+export interface ChatMessage {
+  id: string;
+  room_id: string;
+  user_id: string;
+  username: string;
+  avatar?: string;
+  content: string;
+  image_url?: string;
+  reply_to?: ChatReplyTo;
+  mentions?: string[];
+  created_at: string;
+}
+
 // WebSocket 消息数据类型
 export interface PlaybackData {
   time?: number;
@@ -94,13 +116,14 @@ export interface HostTransferData {
 export interface LiveData {
   stream?: string;
   url?: string;
+  path?: string;
 }
 
 // WebSocket 消息
 export interface RoomMessage {
   room_id?: string;
   action: RoomAction;
-  data?: PlaybackData | PeopleChangeData | ChangeVideoData | HostTransferData | LiveData;
+  data?: PlaybackData | PeopleChangeData | ChangeVideoData | HostTransferData | LiveData | ChatMessage;
   from?: string;
   is_host?: boolean;
 }
@@ -117,10 +140,11 @@ export type RoomAction =
   | 'host_transfer'
   | 'live_started'
   | 'live_ended'
-  | 'stop_playback';
+  | 'stop_playback'
+  | 'chat';
 
 // API 响应
-export interface ApiResponse<T = any> {
+export interface ApiResponse<T = Record<string, unknown>> {
   code: number;
   error?: string;
   data: T;

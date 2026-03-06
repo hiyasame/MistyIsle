@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"time"
@@ -364,6 +365,114 @@ func (d *DB) CleanupExpiredVideos() (int64, error) {
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+// ============ 聊天消息相关方法 ============
+
+// SaveChatMessage 保存聊天消息
+func (d *DB) SaveChatMessage(msg *model.ChatMessage) error {
+	mentionsJSON, err := json.Marshal(msg.Mentions)
+	if err != nil {
+		mentionsJSON = []byte("[]")
+	}
+
+	sql := `
+		INSERT INTO chat_messages
+			(room_id, user_id, username, avatar, content, image_url,
+			 reply_to_id, reply_to_username, reply_to_content, reply_to_image_url,
+			 mentions, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+		RETURNING id
+	`
+	return d.pool.QueryRow(context.Background(), sql,
+		msg.RoomID,
+		msg.UserID,
+		msg.Username,
+		msg.Avatar,
+		msg.Content,
+		msg.ImageURL,
+		msg.ReplyToID,
+		msg.ReplyToUsername,
+		msg.ReplyToContent,
+		msg.ReplyToImageURL,
+		mentionsJSON,
+		msg.CreatedAt,
+	).Scan(&msg.ID)
+}
+
+// GetRecentChatMessages 获取房间最近的聊天消息
+func (d *DB) GetRecentChatMessages(roomID string, limit int) ([]*model.ChatMessage, error) {
+	sql := `
+		SELECT id, room_id, user_id, username, avatar, content, image_url,
+			reply_to_id, reply_to_username, reply_to_content, reply_to_image_url,
+			mentions, created_at
+		FROM chat_messages
+		WHERE room_id = $1
+		ORDER BY created_at DESC
+		LIMIT $2
+	`
+	rows, err := d.pool.Query(context.Background(), sql, roomID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var msgs []*model.ChatMessage
+	for rows.Next() {
+		msg := &model.ChatMessage{}
+		var mentionsJSON []byte
+		err := rows.Scan(
+			&msg.ID, &msg.RoomID, &msg.UserID, &msg.Username, &msg.Avatar,
+			&msg.Content, &msg.ImageURL,
+			&msg.ReplyToID, &msg.ReplyToUsername, &msg.ReplyToContent, &msg.ReplyToImageURL,
+			&mentionsJSON, &msg.CreatedAt,
+		)
+		if err != nil {
+			return nil, err
+		}
+		if len(mentionsJSON) > 0 {
+			_ = json.Unmarshal(mentionsJSON, &msg.Mentions)
+		}
+		if msg.Mentions == nil {
+			msg.Mentions = []string{}
+		}
+		msgs = append(msgs, msg)
+	}
+
+	// 反转顺序（从旧到新）
+	for i, j := 0, len(msgs)-1; i < j; i, j = i+1, j-1 {
+		msgs[i], msgs[j] = msgs[j], msgs[i]
+	}
+	return msgs, nil
+}
+
+// GetChatMessageByID 根据ID获取聊天消息
+func (d *DB) GetChatMessageByID(id uint64) (*model.ChatMessage, error) {
+	sql := `
+		SELECT id, room_id, user_id, username, avatar, content, image_url,
+			reply_to_id, reply_to_username, reply_to_content, reply_to_image_url,
+			mentions, created_at
+		FROM chat_messages
+		WHERE id = $1
+	`
+	msg := &model.ChatMessage{}
+	var mentionsJSON []byte
+	err := d.pool.QueryRow(context.Background(), sql, id).Scan(
+		&msg.ID, &msg.RoomID, &msg.UserID, &msg.Username, &msg.Avatar,
+		&msg.Content, &msg.ImageURL,
+		&msg.ReplyToID, &msg.ReplyToUsername, &msg.ReplyToContent, &msg.ReplyToImageURL,
+		&mentionsJSON, &msg.CreatedAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+	if len(mentionsJSON) > 0 {
+		_ = json.Unmarshal(mentionsJSON, &msg.Mentions)
+	}
+	if msg.Mentions == nil {
+		msg.Mentions = []string{}
+	}
+	return msg, nil
 }
 
 // joinStrings 辅助函数

@@ -3,12 +3,15 @@ package handler
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"misty-isle/model"
+	"misty-isle/utils"
 	"misty-isle/websocket"
 
 	"github.com/gin-gonic/gin"
@@ -192,6 +195,117 @@ func (h *Handler) RoomDelete(hub *websocket.Hub) gin.HandlerFunc {
 			"message": "room deleted successfully",
 		})
 	}
+}
+
+// RoomChatHistory 获取房间聊天历史
+func (h *Handler) RoomChatHistory(c *gin.Context) {
+	roomID := c.Param("id")
+
+	limitStr := c.DefaultQuery("limit", "50")
+	limit, err := strconv.Atoi(limitStr)
+	if err != nil || limit <= 0 || limit > 100 {
+		limit = 50
+	}
+
+	msgs, err := h.ChatDB.GetRecentChatMessages(roomID, limit)
+	if err != nil {
+		h.Error(c, http.StatusInternalServerError, "failed to get chat history")
+		return
+	}
+
+	type replyTo struct {
+		ID       string `json:"id"`
+		Username string `json:"username"`
+		Content  string `json:"content"`
+		ImageURL string `json:"image_url,omitempty"`
+	}
+	type chatMsgResp struct {
+		ID        string   `json:"id"`
+		RoomID    string   `json:"room_id"`
+		UserID    string   `json:"user_id"`
+		Username  string   `json:"username"`
+		Avatar    string   `json:"avatar,omitempty"`
+		Content   string   `json:"content"`
+		ImageURL  string   `json:"image_url,omitempty"`
+		ReplyTo   *replyTo `json:"reply_to,omitempty"`
+		Mentions  []string `json:"mentions"`
+		CreatedAt string   `json:"created_at"`
+	}
+
+	result := make([]chatMsgResp, 0, len(msgs))
+	for _, msg := range msgs {
+		item := chatMsgResp{
+			ID:        fmt.Sprintf("%d", msg.ID),
+			RoomID:    msg.RoomID,
+			UserID:    fmt.Sprintf("%d", msg.UserID),
+			Username:  msg.Username,
+			Avatar:    msg.Avatar,
+			Content:   msg.Content,
+			ImageURL:  msg.ImageURL,
+			Mentions:  msg.Mentions,
+			CreatedAt: msg.CreatedAt.Format(time.RFC3339),
+		}
+		if msg.ReplyToID != nil {
+			item.ReplyTo = &replyTo{
+				ID:       fmt.Sprintf("%d", *msg.ReplyToID),
+				Username: msg.ReplyToUsername,
+				Content:  msg.ReplyToContent,
+				ImageURL: msg.ReplyToImageURL,
+			}
+		}
+		result = append(result, item)
+	}
+
+	h.Success(c, gin.H{"messages": result})
+}
+
+// RoomChatUploadImage 上传聊天图片到 R2
+func (h *Handler) RoomChatUploadImage(c *gin.Context) {
+	roomID := c.Param("id")
+
+	file, header, err := c.Request.FormFile("image")
+	if err != nil {
+		h.Error(c, http.StatusBadRequest, "missing image file")
+		return
+	}
+	defer file.Close()
+
+	// 限制文件大小 10MB
+	if header.Size > 10*1024*1024 {
+		h.Error(c, http.StatusBadRequest, "image too large (max 10MB)")
+		return
+	}
+
+	// 检查文件类型
+	contentType := header.Header.Get("Content-Type")
+	if !strings.HasPrefix(contentType, "image/") {
+		h.Error(c, http.StatusBadRequest, "file must be an image")
+		return
+	}
+
+	data, err := io.ReadAll(file)
+	if err != nil {
+		h.Error(c, http.StatusInternalServerError, "failed to read file")
+		return
+	}
+
+	// 生成 R2 key
+	ext := ""
+	if idx := strings.LastIndex(header.Filename, "."); idx >= 0 {
+		ext = header.Filename[idx:]
+	}
+	key := fmt.Sprintf("chat/%s/%d%s", roomID, time.Now().UnixMilli(), ext)
+
+	result, err := h.R2.Upload(c.Request.Context(), key, data, utils.UploadOptions{
+		ContentType: contentType,
+	})
+	if err != nil {
+		log.Printf("[RoomChatUploadImage] R2 upload failed: %v", err)
+		h.Error(c, http.StatusInternalServerError, "upload failed")
+		return
+	}
+
+	h.Success(c, gin.H{"url": result.URL})
 }
 
 // RoomTransferHost 移交房主权限

@@ -2,6 +2,7 @@ package websocket
 
 import (
 	"encoding/json"
+	"misty-isle/model"
 	"misty-isle/service"
 	"testing"
 	"time"
@@ -12,7 +13,7 @@ import (
 // 测试 NewHub
 func TestNewHub(t *testing.T) {
 	roomService := service.NewRoomService()
-	hub := NewHub(roomService)
+	hub := NewHub(roomService, nil, nil)
 
 	assert.NotNil(t, hub)
 	assert.NotNil(t, hub.rooms)
@@ -23,18 +24,18 @@ func TestNewHub(t *testing.T) {
 	assert.NotNil(t, hub.unregister)
 }
 
-// 测试 NotifyUser
+// 测试 NotifyUser（使用 user_ 前缀连接，绕过房间验证）
 func TestHub_NotifyUser(t *testing.T) {
 	roomService := service.NewRoomService()
-	hub := NewHub(roomService)
+	hub := NewHub(roomService, nil, nil)
 
 	// 启动 Hub
 	go hub.Run()
 
-	// 创建测试客户端
+	// 创建测试客户端（user_ 前缀，只接收用户级通知）
 	client := &Client{
 		userID: "user123",
-		roomID: "room1",
+		roomID: "user_user123",
 		send:   make(chan []byte, 10),
 	}
 
@@ -73,20 +74,20 @@ func TestHub_NotifyUser(t *testing.T) {
 // 测试多个客户端接收通知
 func TestHub_NotifyUser_MultipleClients(t *testing.T) {
 	roomService := service.NewRoomService()
-	hub := NewHub(roomService)
+	hub := NewHub(roomService, nil, nil)
 
 	go hub.Run()
 
-	// 为同一用户创建多个客户端（多个设备/浏览器标签）
+	// 为同一用户创建多个客户端（user_ 前缀）
 	client1 := &Client{
 		userID: "user123",
-		roomID: "room1",
+		roomID: "user_user123",
 		send:   make(chan []byte, 10),
 	}
 
 	client2 := &Client{
 		userID: "user123",
-		roomID: "room2",
+		roomID: "user_user123b",
 		send:   make(chan []byte, 10),
 	}
 
@@ -122,20 +123,23 @@ func TestHub_NotifyUser_MultipleClients(t *testing.T) {
 // 测试 BroadcastToRoom（已有功能）
 func TestHub_BroadcastToRoom(t *testing.T) {
 	roomService := service.NewRoomService()
-	hub := NewHub(roomService)
+	hub := NewHub(roomService, nil, nil)
 
 	go hub.Run()
+
+	// 预先创建房间
+	room := roomService.CreateRoom(model.RoomOptions{Name: "test"}, "user1")
 
 	// 创建两个客户端在同一房间
 	client1 := &Client{
 		userID: "user1",
-		roomID: "room1",
+		roomID: room.ID,
 		send:   make(chan []byte, 10),
 	}
 
 	client2 := &Client{
 		userID: "user2",
-		roomID: "room1",
+		roomID: room.ID,
 		send:   make(chan []byte, 10),
 	}
 
@@ -155,14 +159,14 @@ func TestHub_BroadcastToRoom(t *testing.T) {
 	testData, _ := json.Marshal(map[string]interface{}{
 		"action": "play",
 	})
-	hub.BroadcastToRoom("room1", "play", testData, "user1")
+	hub.BroadcastToRoom(room.ID, "play", testData, "user1")
 
 	// client2 应该收到消息（但不发给发送者 client1）
 	select {
 	case msg := <-client2.send:
 		var roomMsg RoomMessage
 		json.Unmarshal(msg, &roomMsg)
-		assert.Equal(t, "room1", roomMsg.RoomID)
+		assert.Equal(t, room.ID, roomMsg.RoomID)
 		assert.Equal(t, "play", roomMsg.Action)
 		assert.Equal(t, "user1", roomMsg.From)
 
@@ -182,13 +186,16 @@ func TestHub_BroadcastToRoom(t *testing.T) {
 // 测试客户端注册和注销
 func TestHub_RegisterUnregister(t *testing.T) {
 	roomService := service.NewRoomService()
-	hub := NewHub(roomService)
+	hub := NewHub(roomService, nil, nil)
 
 	go hub.Run()
 
+	// 预先创建房间
+	room := roomService.CreateRoom(model.RoomOptions{Name: "test"}, "user1")
+
 	client := &Client{
 		userID: "user1",
-		roomID: "room1",
+		roomID: room.ID,
 		send:   make(chan []byte, 10),
 	}
 
@@ -197,7 +204,7 @@ func TestHub_RegisterUnregister(t *testing.T) {
 	time.Sleep(10 * time.Millisecond)
 
 	hub.mu.RLock()
-	assert.Contains(t, hub.rooms["room1"], client)
+	assert.Contains(t, hub.rooms[room.ID], client)
 	assert.Contains(t, hub.users["user1"], client)
 	hub.mu.RUnlock()
 
@@ -206,7 +213,7 @@ func TestHub_RegisterUnregister(t *testing.T) {
 	time.Sleep(10 * time.Millisecond)
 
 	hub.mu.RLock()
-	assert.NotContains(t, hub.rooms["room1"], client)
+	assert.NotContains(t, hub.rooms[room.ID], client)
 	assert.NotContains(t, hub.users["user1"], client)
 	hub.mu.RUnlock()
 }
@@ -214,27 +221,35 @@ func TestHub_RegisterUnregister(t *testing.T) {
 // 测试用户级通知不干扰房间消息
 func TestHub_UserNotifyAndRoomBroadcast_Isolated(t *testing.T) {
 	roomService := service.NewRoomService()
-	hub := NewHub(roomService)
+	hub := NewHub(roomService, nil, nil)
 
 	go hub.Run()
 
-	// user1 在 room1
+	// 预先创建 room2
+	room2 := roomService.CreateRoom(model.RoomOptions{Name: "room2"}, "user2")
+
+	// user1 使用 user_ 前缀（只接收用户通知）
 	client1 := &Client{
 		userID: "user1",
-		roomID: "room1",
+		roomID: "user_user1",
 		send:   make(chan []byte, 10),
 	}
 
 	// user2 在 room2
 	client2 := &Client{
 		userID: "user2",
-		roomID: "room2",
+		roomID: room2.ID,
 		send:   make(chan []byte, 10),
 	}
 
 	hub.register <- client1
 	hub.register <- client2
 	time.Sleep(50 * time.Millisecond)
+
+	// 清空 client2 注册消息
+	for len(client2.send) > 0 {
+		<-client2.send
+	}
 
 	// 向 user1 发送用户级通知
 	hub.NotifyUser("user1", "video_status", map[string]interface{}{
@@ -243,7 +258,7 @@ func TestHub_UserNotifyAndRoomBroadcast_Isolated(t *testing.T) {
 
 	// 向 room2 发送房间广播
 	testData, _ := json.Marshal(map[string]string{"action": "play"})
-	hub.BroadcastToRoom("room2", "play", testData, "user2")
+	hub.BroadcastToRoom(room2.ID, "play", testData, "user2")
 
 	// client1 只应收到用户通知
 	select {
@@ -275,13 +290,13 @@ func TestHub_UserNotifyAndRoomBroadcast_Isolated(t *testing.T) {
 // Benchmark: 用户通知性能
 func BenchmarkHub_NotifyUser(b *testing.B) {
 	roomService := service.NewRoomService()
-	hub := NewHub(roomService)
+	hub := NewHub(roomService, nil, nil)
 
 	go hub.Run()
 
 	client := &Client{
 		userID: "user1",
-		roomID: "room1",
+		roomID: "user_user1",
 		send:   make(chan []byte, 10000),
 	}
 

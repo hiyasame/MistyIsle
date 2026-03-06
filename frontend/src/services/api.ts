@@ -1,5 +1,5 @@
 import { API_BASE_URL } from '../utils/config';
-import type { ApiResponse, LoginResponse, User, Room, Video } from '../types';
+import type { ApiResponse, LoginResponse, User, Room, Video, ChatMessage } from '../types';
 
 // 获取 token
 function getAuthToken(): string {
@@ -217,9 +217,32 @@ export const roomApi = {
   },
 
   // 删除房间
-  async delete(roomId: string): Promise<ApiResponse<any>> {
+  async delete(roomId: string): Promise<ApiResponse<Record<string, unknown>>> {
     return request(`/room/${roomId}`, {
       method: 'DELETE'
     });
+  },
+
+  // 获取聊天历史
+  async getChatHistory(roomId: string, limit = 50): Promise<ApiResponse<{ messages: ChatMessage[] }>> {
+    return request<{ messages: ChatMessage[] }>(`/room/${roomId}/chat?limit=${limit}`);
+  },
+
+  // 上传聊天图片
+  async uploadChatImage(roomId: string, file: File): Promise<ApiResponse<{ url: string }>> {
+    const token = localStorage.getItem('auth_token') || '';
+    const formData = new FormData();
+    formData.append('image', file);
+
+    const response = await fetch(`${API_BASE_URL}/room/${roomId}/chat/image`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${token}` },
+      body: formData
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+    return response.json();
   }
 };

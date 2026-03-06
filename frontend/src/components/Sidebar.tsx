@@ -1,5 +1,5 @@
-import { useState, useEffect, useCallback } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { useNavigate, useLocation, useParams } from 'react-router-dom';
 import { roomApi } from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
 import type { Room } from '../types';
@@ -12,8 +12,10 @@ import type { Room } from '../types';
  */
 export default function Sidebar() {
   const navigate = useNavigate();
+  const location = useLocation();
   const { id: currentRoomId } = useParams();
   const { user } = useAuth();
+  const prevPathRef = useRef(location.pathname);
   const [rooms, setRooms] = useState<Room[]>([]);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [roomName, setRoomName] = useState('');
@@ -36,8 +38,32 @@ export default function Sidebar() {
   useEffect(() => {
     loadRooms();
     // 定期刷新房间列表
-    const interval = setInterval(loadRooms, 10000);
+    const interval = setInterval(loadRooms, 5000);
     return () => clearInterval(interval);
+  }, [loadRooms]);
+
+  // 路由变化时刷新
+  useEffect(() => {
+    const prevPath = prevPathRef.current;
+    prevPathRef.current = location.pathname;
+    // 从 /room/:id 跳转到其他页面时，等后端 5 秒延迟后再拉一次
+    if (prevPath.startsWith('/room/') && !location.pathname.startsWith('/room/')) {
+      const timer = setTimeout(loadRooms, 6000);
+      return () => clearTimeout(timer);
+    }
+    // 进入任何页面时立即刷新一次
+    loadRooms();
+  }, [location.pathname, loadRooms]);
+
+  // 页面从隐藏恢复可见时刷新
+  useEffect(() => {
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        loadRooms();
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
+    return () => document.removeEventListener('visibilitychange', handleVisibility);
   }, [loadRooms]);
 
   const handleCreateRoom = async () => {

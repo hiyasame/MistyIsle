@@ -3,12 +3,24 @@ package websocket
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
+	"misty-isle/model"
 	"misty-isle/service"
 	"misty-isle/utils"
+	"strconv"
 	"sync"
 	"time"
+
+	goredis "github.com/redis/go-redis/v9"
 )
+
+// ChatDB 聊天消息数据库接口
+type ChatDB interface {
+	SaveChatMessage(msg *model.ChatMessage) error
+	GetRecentChatMessages(roomID string, limit int) ([]*model.ChatMessage, error)
+	GetChatMessageByID(id uint64) (*model.ChatMessage, error)
+}
 
 // Hub 管理所有 WebSocket 连接
 // 房间状态（host、users）由 RoomService 管理
@@ -19,6 +31,12 @@ type Hub struct {
 	users map[string]utils.Set[*Client]
 	// 房间状态管理（包含 host、users 等）
 	roomService *service.RoomService
+	// 聊天消息数据库
+	db ChatDB
+	// Redis 客户端（可为 nil）
+	redis *utils.RedisClient
+	// 房间 Redis 订阅（roomID -> PubSub）
+	roomSubs map[string]*goredis.PubSub
 	// 广播消息
 	broadcast chan *RoomMessage
 	// 用户级通知
@@ -41,7 +59,7 @@ type UserNotification struct {
 
 type RoomMessage struct {
 	RoomID string          `json:"room_id"`
-	Action string          `json:"action"` // play, pause, seek, sync, join, leave, change_video, video_end, live_started, live_ended
+	Action string          `json:"action"` // play, pause, seek, sync, join, leave, change_video, video_end, live_started, live_ended, chat
 	Data   json.RawMessage `json:"data"`
 	From   string          `json:"from"`    // 发送者用户ID
 	IsHost bool            `json:"is_host"` // 发送者是否是房主
@@ -53,11 +71,14 @@ var hostOnlyActions = map[string]bool{
 	"change_video": true,
 }
 
-func NewHub(roomService *service.RoomService) *Hub {
+func NewHub(roomService *service.RoomService, db ChatDB, redis *utils.RedisClient) *Hub {
 	return &Hub{
 		rooms:           make(map[string]utils.Set[*Client]),
 		users:           make(map[string]utils.Set[*Client]),
 		roomService:     roomService,
+		db:              db,
+		redis:           redis,
+		roomSubs:        make(map[string]*goredis.PubSub),
 		broadcast:       make(chan *RoomMessage, 100),
 		userNotify:      make(chan *UserNotification, 100),
 		register:        make(chan *Client, 100),
@@ -82,7 +103,9 @@ func (h *Hub) Run() {
 			if !exists {
 				// 房间不存在，拒绝连接
 				log.Printf("Client %s tried to join non-existent room %s", client.userID, client.roomID)
-				client.conn.Close()
+				if client.conn != nil {
+					client.conn.Close()
+				}
 				continue
 			}
 
@@ -93,6 +116,11 @@ func (h *Hub) Run() {
 					h.rooms[client.roomID] = make(utils.Set[*Client])
 				}
 				h.rooms[client.roomID][client] = struct{}{}
+
+				// 如果这是房间的第一个连接，启动 Redis 订阅
+				if h.redis != nil && len(h.rooms[client.roomID]) == 1 {
+					h.startRoomSubscription(client.roomID)
+				}
 			}
 
 			// 注册到用户连接池（无论哪种连接都要注册，以便 NotifyUser 找到）
@@ -145,6 +173,10 @@ func (h *Hub) Run() {
 				delete(clients, client)
 				if len(clients) == 0 {
 					delete(h.rooms, roomID)
+					// 房间空了，取消 Redis 订阅
+					if h.redis != nil {
+						h.stopRoomSubscription(roomID)
+					}
 				}
 			}
 
@@ -174,13 +206,20 @@ func (h *Hub) Run() {
 					delete(h.pendingCleanups, cleanupKey)
 					h.mu.Unlock()
 
-					// 检查用户是否已经重连（通过检查 users 映射）
+					// 检查用户是否已经重连（只检查该房间内是否有该用户的连接，不包括 user_ 前缀的通知连接）
 					h.mu.RLock()
-					reconnected := len(h.users[userID]) > 0
+					reconnected := false
+					if roomClients, ok := h.rooms[roomID]; ok {
+						for c := range roomClients {
+							if c.userID == userID {
+								reconnected = true
+								break
+							}
+						}
+					}
 					h.mu.RUnlock()
-
 					if reconnected {
-						log.Printf("[Hub] User %s reconnected, skipping cleanup", userID)
+						log.Printf("[Hub] User %s reconnected to room %s, skipping cleanup", userID, roomID)
 						return
 					}
 
@@ -230,6 +269,12 @@ func (h *Hub) Run() {
 			}
 
 		case msg := <-h.broadcast:
+			// 处理聊天消息
+			if msg.Action == "chat" {
+				h.handleChatMessage(msg)
+				continue
+			}
+
 			h.mu.RLock()
 			clients := h.rooms[msg.RoomID]
 			h.mu.RUnlock()
@@ -279,6 +324,173 @@ func (h *Hub) Run() {
 				}
 			}
 		}
+	}
+}
+
+// handleChatMessage 处理聊天消息：保存到DB，通过Redis广播或直接广播
+func (h *Hub) handleChatMessage(msg *RoomMessage) {
+	// 解析客户端发来的聊天数据
+	var chatReq struct {
+		Content   string   `json:"content"`
+		ImageURL  string   `json:"image_url"`
+		ReplyToID *uint64  `json:"reply_to_id"`
+		Mentions  []string `json:"mentions"`
+	}
+	if err := json.Unmarshal(msg.Data, &chatReq); err != nil {
+		log.Printf("[Hub] Failed to parse chat message from %s: %v", msg.From, err)
+		return
+	}
+
+	// 内容验证：文字和图片不能都为空，文字不超过1000字符
+	if chatReq.Content == "" && chatReq.ImageURL == "" {
+		return
+	}
+	if len([]rune(chatReq.Content)) > 1000 {
+		return
+	}
+
+	userIDUint, err := strconv.ParseUint(msg.From, 10, 64)
+	if err != nil {
+		log.Printf("[Hub] Invalid userID in chat: %s", msg.From)
+		return
+	}
+
+	// 获取发送者信息（从房间内客户端查找）
+	var senderUsername, senderAvatar string
+	h.mu.RLock()
+	if clients, ok := h.rooms[msg.RoomID]; ok {
+		for c := range clients {
+			if c.userID == msg.From {
+				senderUsername = c.username
+				senderAvatar = c.avatar
+				break
+			}
+		}
+	}
+	h.mu.RUnlock()
+
+	// 构建消息对象
+	chatMsg := &model.ChatMessage{
+		RoomID:    msg.RoomID,
+		UserID:    userIDUint,
+		Username:  senderUsername,
+		Avatar:    senderAvatar,
+		Content:   chatReq.Content,
+		ImageURL:  chatReq.ImageURL,
+		Mentions:  chatReq.Mentions,
+		ReplyToID: chatReq.ReplyToID,
+		CreatedAt: time.Now(),
+	}
+	if chatMsg.Mentions == nil {
+		chatMsg.Mentions = []string{}
+	}
+
+	// 如果有回复，查询被回复的消息
+	if chatReq.ReplyToID != nil {
+		replied, err := h.db.GetChatMessageByID(*chatReq.ReplyToID)
+		if err == nil {
+			chatMsg.ReplyToUsername = replied.Username
+			chatMsg.ReplyToContent = replied.Content
+			chatMsg.ReplyToImageURL = replied.ImageURL
+		}
+	}
+
+	// 保存到数据库
+	if err := h.db.SaveChatMessage(chatMsg); err != nil {
+		log.Printf("[Hub] Failed to save chat message: %v", err)
+		return
+	}
+
+	// 构建广播用的完整消息
+	broadcastData := h.buildChatBroadcastData(chatMsg)
+	broadcastMsg := &RoomMessage{
+		RoomID: msg.RoomID,
+		Action: "chat",
+		Data:   broadcastData,
+		From:   msg.From,
+	}
+
+	if h.redis != nil {
+		// 通过 Redis Pub/Sub 广播（多实例场景）
+		payload, _ := json.Marshal(broadcastMsg)
+		if err := h.redis.PublishChat(msg.RoomID, payload); err != nil {
+			log.Printf("[Hub] Redis publish failed, falling back to direct broadcast: %v", err)
+			h.broadcastChatDirect(broadcastMsg)
+		}
+	} else {
+		// 直接内存广播
+		h.broadcastChatDirect(broadcastMsg)
+	}
+}
+
+// buildChatBroadcastData 构建聊天广播的 data 字段
+func (h *Hub) buildChatBroadcastData(msg *model.ChatMessage) json.RawMessage {
+	data := map[string]interface{}{
+		"id":         fmt.Sprintf("%d", msg.ID),
+		"room_id":    msg.RoomID,
+		"user_id":    fmt.Sprintf("%d", msg.UserID),
+		"username":   msg.Username,
+		"avatar":     msg.Avatar,
+		"content":    msg.Content,
+		"image_url":  msg.ImageURL,
+		"mentions":   msg.Mentions,
+		"created_at": msg.CreatedAt.Format(time.RFC3339),
+	}
+	if msg.ReplyToID != nil {
+		data["reply_to"] = map[string]interface{}{
+			"id":        fmt.Sprintf("%d", *msg.ReplyToID),
+			"username":  msg.ReplyToUsername,
+			"content":   msg.ReplyToContent,
+			"image_url": msg.ReplyToImageURL,
+		}
+	}
+	return mustJSON(data)
+}
+
+// broadcastChatDirect 直接向房间内所有客户端广播聊天消息
+func (h *Hub) broadcastChatDirect(msg *RoomMessage) {
+	data, _ := json.Marshal(msg)
+	h.mu.RLock()
+	clients := h.rooms[msg.RoomID]
+	h.mu.RUnlock()
+	for client := range clients {
+		select {
+		case client.send <- data:
+		default:
+			go func(c *Client) { h.unregister <- c }(client)
+		}
+	}
+}
+
+// startRoomSubscription 启动房间的 Redis 订阅 goroutine（必须在持有 mu.Lock 时调用）
+func (h *Hub) startRoomSubscription(roomID string) {
+	if _, exists := h.roomSubs[roomID]; exists {
+		return
+	}
+	pubsub := h.redis.SubscribeChat(roomID)
+	h.roomSubs[roomID] = pubsub
+	log.Printf("[Hub] Started Redis subscription for room %s", roomID)
+
+	go func() {
+		ch := pubsub.Channel()
+		for redisMsg := range ch {
+			var msg RoomMessage
+			if err := json.Unmarshal([]byte(redisMsg.Payload), &msg); err != nil {
+				log.Printf("[Hub] Failed to parse Redis chat message: %v", err)
+				continue
+			}
+			h.broadcastChatDirect(&msg)
+		}
+		log.Printf("[Hub] Redis subscription goroutine ended for room %s", roomID)
+	}()
+}
+
+// stopRoomSubscription 取消房间的 Redis 订阅（必须在持有 mu.Lock 时调用）
+func (h *Hub) stopRoomSubscription(roomID string) {
+	if pubsub, exists := h.roomSubs[roomID]; exists {
+		pubsub.Close()
+		delete(h.roomSubs, roomID)
+		log.Printf("[Hub] Stopped Redis subscription for room %s", roomID)
 	}
 }
 

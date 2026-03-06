@@ -54,28 +54,29 @@ export function useRoomWebSocket(
 
   // 连接 WebSocket
   const connect = useCallback(() => {
-    if (!roomId || !mountedRef.current) return;
+    if (!roomId || !mountedRef.current || isDisconnectingRef.current) return;
 
     try {
-      // 清理旧连接（如果存在）
+      // 清理旧连接
       if (wsRef.current) {
         const oldWs = wsRef.current;
-        wsRef.current = null; // 先清空 ref，避免 onclose 触发重连
-        oldWs.close(); // 再关闭连接
+        wsRef.current = null;
+        oldWs.close();
       }
 
-      // 从 localStorage 获取 token，通过 URL 参数传递
       const token = localStorage.getItem('auth_token') || '';
       const ws = new WebSocket(`${WS_BASE_URL}/ws/${roomId}?token=${encodeURIComponent(token)}`);
       wsRef.current = ws;
 
       ws.onopen = () => {
+        if (!mountedRef.current || isDisconnectingRef.current) {
+          ws.close(1000, 'Stale connection');
+          return;
+        }
         console.log(`WebSocket connected to room ${roomId}`);
         setIsConnected(true);
         setError(null);
         reconnectCountRef.current = 0;
-
-        // 通知应用层连接已建立
         onMessageRef.current?.({ action: 'connected', data: {} });
       };
 
@@ -96,21 +97,19 @@ export function useRoomWebSocket(
 
       ws.onclose = (event) => {
         console.log('WebSocket closed, code:', event.code, 'reason:', event.reason);
-        setIsConnected(false);
 
-        // 只有当 wsRef 仍指向当前关闭的 WebSocket 时才处理
-        if (wsRef.current !== ws) {
-          // WebSocket 已被替换（如重新连接时），忽略旧连接的 close 事件
-          return;
-        }
+        // 忽略已被替换的旧连接的 close 事件
+        if (wsRef.current !== ws) return;
 
         wsRef.current = null;
+        setIsConnected(false);
 
-        // 自动重连（除非正在主动断开）
-        if (!isDisconnectingRef.current && autoReconnect && mountedRef.current && reconnectCountRef.current < maxReconnectAttempts) {
+        // unmount 或主动断开时不重连
+        if (!mountedRef.current || isDisconnectingRef.current) return;
+
+        if (autoReconnect && reconnectCountRef.current < maxReconnectAttempts) {
           reconnectCountRef.current += 1;
           console.log(`Reconnecting... (${reconnectCountRef.current}/${maxReconnectAttempts})`);
-
           reconnectTimerRef.current = setTimeout(() => {
             connect();
           }, reconnectInterval);
@@ -126,25 +125,21 @@ export function useRoomWebSocket(
 
   // 断开连接
   const disconnect = useCallback(() => {
-    isDisconnectingRef.current = true; // 标记正在主动断开，阻止自动重连
-
+    isDisconnectingRef.current = true;
     if (reconnectTimerRef.current) {
       clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = null;
     }
-    if (wsRef.current) {
+    const ws = wsRef.current;
+    wsRef.current = null;
+    if (ws) {
       try {
-        wsRef.current.close(1000, 'User left room');
+        ws.close(1000, 'User left room');
       } catch (e) {
         console.error('Error closing WebSocket:', e);
       }
-      wsRef.current = null;
     }
     setIsConnected(false);
-
-    // 延迟重置标记，确保 onclose 回调已执行
-    setTimeout(() => {
-      isDisconnectingRef.current = false;
-    }, 100);
   }, []);
 
   // 初始化和清理
@@ -159,26 +154,28 @@ export function useRoomWebSocket(
 
       if (reconnectTimerRef.current) {
         clearTimeout(reconnectTimerRef.current);
+        reconnectTimerRef.current = null;
       }
 
-      // 获取当前的 WebSocket 引用
       const ws = wsRef.current;
+      wsRef.current = null; // 先清空，让 onclose 里的 wsRef !== ws 检查生效
       if (ws) {
         try {
-          // 只有在连接存在且未关闭时才调用 close
-          if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
+          if (ws.readyState === WebSocket.OPEN) {
             ws.close(1000, 'Component unmounted');
+          } else if (ws.readyState === WebSocket.CONNECTING) {
+            // 不在 CONNECTING 状态直接 close（会产生浏览器警告）
+            // onopen 里会检查 isDisconnectingRef 并自行关闭
           }
         } catch (e) {
           console.error('Error closing WebSocket in cleanup:', e);
         }
-        // 在 cleanup 中不要设置 wsRef.current = null，让 onclose 处理
       }
 
       setIsConnected(false);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [roomId]); // 只依赖 roomId，避免 connect/disconnect 变化导致重新连接
+  }, [roomId]);
 
   return {
     isConnected,

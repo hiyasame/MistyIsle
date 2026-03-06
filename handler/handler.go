@@ -22,10 +22,18 @@ type VideoDBInterface interface {
 	DeleteVideo(videoID uint64, userID uint64) error
 }
 
+// ChatDBInterface 定义聊天相关数据库操作接口
+type ChatDBInterface interface {
+	SaveChatMessage(msg *model.ChatMessage) error
+	GetRecentChatMessages(roomID string, limit int) ([]*model.ChatMessage, error)
+	GetChatMessageByID(id uint64) (*model.ChatMessage, error)
+}
+
 // Handler 包含所有依赖
 type Handler struct {
 	Cfg         *cfg.Config
 	DB          VideoDBInterface
+	ChatDB      ChatDBInterface
 	R2          *utils.R2
 	RoomService *service.RoomService
 	UserService *service.UserService
@@ -41,6 +49,7 @@ func New(cfg *cfg.Config, database *db.DB, r2 *utils.R2, redis *utils.RedisClien
 	return &Handler{
 		Cfg:         cfg,
 		DB:          database,
+		ChatDB:      database,
 		R2:          r2,
 		RoomService: roomService,
 		UserService: service.NewUserService(database, r2, redis, email, cfg),

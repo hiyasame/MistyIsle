@@ -107,3 +107,17 @@ func (r *RedisClient) DelPasswordResetToken(token string) error {
 	key := fmt.Sprintf("reset:%s", token)
 	return r.Del(key)
 }
+
+// ============ 聊天 Pub/Sub 方法 ============
+
+// PublishChat 发布聊天消息到 Redis channel
+func (r *RedisClient) PublishChat(roomID string, data []byte) error {
+	channel := fmt.Sprintf("chat:%s", roomID)
+	return r.client.Publish(r.ctx, channel, data).Err()
+}
+
+// SubscribeChat 订阅房间聊天 channel，返回 PubSub 对象
+func (r *RedisClient) SubscribeChat(roomID string) *redis.PubSub {
+	channel := fmt.Sprintf("chat:%s", roomID)
+	return r.client.Subscribe(r.ctx, channel)
+}

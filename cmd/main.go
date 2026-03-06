@@ -56,7 +56,7 @@ func main() {
 	roomService := service.NewRoomService()
 
 	// 初始化 WebSocket Hub
-	wsHub := websocket.NewHub(roomService)
+	wsHub := websocket.NewHub(roomService, database, redis)
 	go wsHub.Run()
 
 	// 初始化 Handler（依赖注入，传入同一个 roomService）
@@ -96,6 +96,8 @@ func serve(conf *cfg.Config, h *handler.Handler, wsHub *websocket.Hub, database 
 		room.POST("/:id/play", h.RoomPlayVideo(wsHub))        // 播放指定视频
 		room.POST("/:id/transfer", h.RoomTransferHost(wsHub)) // 移交房主权限
 		room.DELETE("/:id", h.RoomDelete(wsHub))              // 删除房间（仅当房间无人时）
+		room.GET("/:id/chat", h.RoomChatHistory)              // 获取聊天历史
+		room.POST("/:id/chat/image", h.RoomChatUploadImage)   // 上传聊天图片
 	}
 
 	// 视频服务

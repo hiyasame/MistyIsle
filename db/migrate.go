@@ -20,6 +20,11 @@ func (d *DB) Migrate() error {
 		return fmt.Errorf("create videos table: %w", err)
 	}
 
+	// 创建聊天消息表
+	if err := d.createChatMessagesTable(); err != nil {
+		return fmt.Errorf("create chat_messages table: %w", err)
+	}
+
 	log.Println("Database migration completed")
 	return nil
 }
@@ -83,6 +88,36 @@ func (d *DB) createVideosTable() error {
 	}
 
 	log.Println("Table 'videos' created or already exists")
+	return nil
+}
+
+// createChatMessagesTable 创建聊天消息表
+func (d *DB) createChatMessagesTable() error {
+	sql := `
+	CREATE TABLE IF NOT EXISTS chat_messages (
+		id BIGSERIAL PRIMARY KEY,
+		room_id VARCHAR(20) NOT NULL,
+		user_id BIGINT NOT NULL,
+		username VARCHAR(32) NOT NULL,
+		avatar VARCHAR(500) DEFAULT '',
+		content TEXT NOT NULL DEFAULT '',
+		image_url VARCHAR(500) DEFAULT '',
+		reply_to_id BIGINT DEFAULT NULL,
+		reply_to_username VARCHAR(32) DEFAULT '',
+		reply_to_content TEXT DEFAULT '',
+		reply_to_image_url VARCHAR(500) DEFAULT '',
+		mentions JSONB DEFAULT '[]',
+		created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+	);
+	CREATE INDEX IF NOT EXISTS idx_chat_messages_room_id ON chat_messages(room_id, created_at DESC);
+	`
+
+	_, err := d.pool.Exec(context.Background(), sql)
+	if err != nil {
+		return err
+	}
+
+	log.Println("Table 'chat_messages' created or already exists")
 	return nil
 }
 

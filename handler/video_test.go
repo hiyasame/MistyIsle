@@ -44,8 +44,21 @@ func (m *DBMock) GetVideosByUserID(userID uint64) ([]*model.Video, error) {
 	return args.Get(0).([]*model.Video), args.Error(1)
 }
 
+func (m *DBMock) GetAllVideos() ([]*model.Video, error) {
+	args := m.Called()
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]*model.Video), args.Error(1)
+}
+
 func (m *DBMock) UpdateVideo(videoID uint64, updates map[string]interface{}) error {
 	args := m.Called(videoID, updates)
+	return args.Error(0)
+}
+
+func (m *DBMock) DeleteVideo(videoID uint64, userID uint64) error {
+	args := m.Called(videoID, userID)
 	return args.Error(0)
 }
 
@@ -255,7 +268,7 @@ func TestVideoList(t *testing.T) {
 		},
 	}
 
-	mockDB.On("GetVideosByUserID", uint64(1)).Return(videos, nil)
+	mockDB.On("GetAllVideos").Return(videos, nil)
 
 	h := &Handler{
 		Cfg: &cfg.Config{},

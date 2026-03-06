@@ -6,15 +6,18 @@ import {getLiveUrl, getPlayUrl, getStreamUrl} from '../utils/config';
 import SyncPlayer from '../components/SyncPlayer';
 import FlvPlayer from '../components/FlvPlayer';
 import {useAuth} from '../contexts/AuthContext';
-import {Room, RoomMessage, RoomUser, Video} from '../types';
+import type {Room, RoomMessage, RoomUser, Video, ChatMessage} from '../types';
+import UserCard from './UserCard';
+import ChatBox, {type ChatBoxHandle} from './ChatBox';
 
 /**
  * 房间视图组件 - Discord 风格
- * 显示在主内容区，包含视频播放器和聊天区域（预留）
+ * 显示在主内容区，包含视频播放器和右侧（用户列表 + 聊天）
  */
 export default function RoomView() {
   const { id: roomId } = useParams();
   const playerRef = useRef(null);
+  const chatBoxRef = useRef<ChatBoxHandle>(null);
 
   const { user } = useAuth();
   const [room, setRoom] = useState<Room | null>(null);
@@ -70,7 +73,7 @@ export default function RoomView() {
     loadVideos();
   }, [loadRoom, loadVideos]);
 
-  const sendMessageRef = useRef<(action: string, data?: any) => boolean>(() => false);
+  const sendMessageRef = useRef<(action: string, data?: unknown) => boolean>(() => false);
 
   // 处理 WebSocket 消息
   const handleWebSocketMessage = useCallback((data: RoomMessage) => {
@@ -109,19 +112,20 @@ export default function RoomView() {
       case 'sync':
         if (playerRef.current && 'handleRemoteAction' in playerRef.current) {
           const playbackData = (data.data && 'time' in data.data) ? data.data as { time: number } : { time: 0 };
-          (playerRef.current as any).handleRemoteAction(data.action, playbackData);
+          (playerRef.current as { handleRemoteAction: (action: string, data: { time: number }) => void })
+            .handleRemoteAction(data.action, playbackData);
         }
         break;
 
       case 'change_video':
         if (data.data && 'video' in data.data && data.data.video) {
-          setCurrentVideo(data.data.video);
+          setCurrentVideo(data.data.video as Video);
         }
         break;
 
       case 'host_transfer':
         if (data.data && 'new_host_id' in data.data) {
-          const transferData = data.data;
+          const transferData = data.data as { new_host_id: string };
           setIsHost(transferData.new_host_id === userId);
           setUsers(prev => prev.map(u => ({
             ...u,
@@ -151,6 +155,12 @@ export default function RoomView() {
 
       case 'stop_playback':
         setCurrentVideo(null);
+        break;
+
+      case 'chat':
+        if (data.data && 'id' in data.data) {
+          chatBoxRef.current?.receiveMessage(data.data as ChatMessage);
+        }
         break;
 
       default:
@@ -241,6 +251,8 @@ export default function RoomView() {
     );
   }
 
+  const hostId = room?.host_id || '';
+
   return (
     <>
       {/* 顶部栏：房间信息 */}
@@ -254,27 +266,14 @@ export default function RoomView() {
         gap: '16px',
         flexShrink: 0
       }}>
-        <div style={{
-          fontSize: '1rem',
-          fontWeight: '700',
-          color: '#fff'
-        }}>
+        <div style={{ fontSize: '1rem', fontWeight: '700', color: '#fff' }}>
           # {room?.name}
         </div>
 
         {room?.desc && (
           <>
-            <div style={{
-              width: '1px',
-              height: '24px',
-              backgroundColor: '#42454a'
-            }} />
-            <div style={{
-              fontSize: '0.875rem',
-              color: '#b9bbbe'
-            }}>
-              {room.desc}
-            </div>
+            <div style={{ width: '1px', height: '24px', backgroundColor: '#42454a' }} />
+            <div style={{ fontSize: '0.875rem', color: '#b9bbbe' }}>{room.desc}</div>
           </>
         )}
 
@@ -291,15 +290,9 @@ export default function RoomView() {
             <button
               onClick={handleStopPlayback}
               style={{
-                padding: '6px 12px',
-                backgroundColor: '#f23f43',
-                color: 'white',
-                border: 'none',
-                borderRadius: '4px',
-                fontSize: '0.875rem',
-                fontWeight: '600',
-                cursor: 'pointer',
-                transition: 'background-color 0.2s'
+                padding: '6px 12px', backgroundColor: '#f23f43', color: 'white',
+                border: 'none', borderRadius: '4px', fontSize: '0.875rem',
+                fontWeight: '600', cursor: 'pointer', transition: 'background-color 0.2s'
               }}
               onMouseOver={(e) => e.currentTarget.style.backgroundColor = '#c93437'}
               onMouseOut={(e) => e.currentTarget.style.backgroundColor = '#f23f43'}
@@ -311,15 +304,9 @@ export default function RoomView() {
           <button
             onClick={() => setShowVideoLibrary(!showVideoLibrary)}
             style={{
-              padding: '6px 12px',
-              backgroundColor: '#4752c4',
-              color: 'white',
-              border: 'none',
-              borderRadius: '4px',
-              fontSize: '0.875rem',
-              fontWeight: '600',
-              cursor: 'pointer',
-              transition: 'background-color 0.2s'
+              padding: '6px 12px', backgroundColor: '#4752c4', color: 'white',
+              border: 'none', borderRadius: '4px', fontSize: '0.875rem',
+              fontWeight: '600', cursor: 'pointer', transition: 'background-color 0.2s'
             }}
             onMouseOver={(e) => e.currentTarget.style.backgroundColor = '#3c45a3'}
             onMouseOut={(e) => e.currentTarget.style.backgroundColor = '#4752c4'}
@@ -330,25 +317,12 @@ export default function RoomView() {
       </div>
 
       {/* 主内容区 */}
-      <div style={{
-        flex: 1,
-        display: 'flex',
-        overflow: 'hidden'
-      }}>
+      <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
         {/* 视频播放器区域 */}
-        <div style={{
-          flex: 1,
-          display: 'flex',
-          flexDirection: 'column',
-          backgroundColor: '#000'
-        }}>
-          {/* 视频播放器 */}
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', backgroundColor: '#000' }}>
           <div style={{
-            flex: 1,
-            backgroundColor: '#000',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center'
+            flex: 1, backgroundColor: '#000',
+            display: 'flex', alignItems: 'center', justifyContent: 'center'
           }}>
             {currentVideo ? (
               currentVideo.is_live ? (
@@ -369,32 +343,20 @@ export default function RoomView() {
               )
             ) : (
               <div style={{
-                textAlign: 'center',
-                color: '#b9bbbe',
-                padding: '3rem',
-                width: '100%',
-                maxWidth: '1000px',
-                margin: '0 auto'
+                textAlign: 'center', color: '#b9bbbe', padding: '3rem',
+                width: '100%', maxWidth: '1000px', margin: '0 auto'
               }}>
                 <div style={{ fontSize: '3rem', marginBottom: '1rem' }}>🎬</div>
-                <p style={{ fontSize: '1.125rem', marginBottom: '0.5rem' }}>
-                  {room?.name}
-                </p>
+                <p style={{ fontSize: '1.125rem', marginBottom: '0.5rem' }}>{room?.name}</p>
                 <p style={{ fontSize: '0.875rem', color: '#72767d', lineHeight: '1.6' }}>
                   点击"选择视频"开始观影，也可以使用 OBS 推流直播<br />
                   或者等待其他人这么做
                 </p>
 
-                {/* 推流信息 */}
                 {room?.stream_path && (
                   <div style={{
-                    marginTop: '2rem',
-                    padding: '1.5rem',
-                    backgroundColor: '#2f3136',
-                    borderRadius: '8px',
-                    textAlign: 'left',
-                    width: '100%',
-                    boxSizing: 'border-box'
+                    marginTop: '2rem', padding: '1.5rem', backgroundColor: '#2f3136',
+                    borderRadius: '8px', textAlign: 'left', width: '100%', boxSizing: 'border-box'
                   }}>
                     <h3 style={{ fontSize: '1rem', marginBottom: '1rem', color: '#faa81a', fontWeight: '700' }}>
                       🔴 直播推流信息
@@ -410,14 +372,9 @@ export default function RoomView() {
                           value={getStreamUrl(room.stream_path || '') || ''}
                           readOnly
                           style={{
-                            flex: 1,
-                            padding: '8px',
-                            backgroundColor: '#202225',
-                            border: 'none',
-                            borderRadius: '4px',
-                            color: '#dcddde',
-                            fontSize: '0.875rem',
-                            fontFamily: 'monospace'
+                            flex: 1, padding: '8px', backgroundColor: '#202225',
+                            border: 'none', borderRadius: '4px', color: '#dcddde',
+                            fontSize: '0.875rem', fontFamily: 'monospace'
                           }}
                         />
                         <button
@@ -426,14 +383,9 @@ export default function RoomView() {
                             alert('已复制到剪贴板');
                           }}
                           style={{
-                            padding: '8px 12px',
-                            backgroundColor: '#4752c4',
-                            color: 'white',
-                            border: 'none',
-                            borderRadius: '4px',
-                            cursor: 'pointer',
-                            fontSize: '0.875rem',
-                            fontWeight: '600'
+                            padding: '8px 12px', backgroundColor: '#4752c4', color: 'white',
+                            border: 'none', borderRadius: '4px', cursor: 'pointer',
+                            fontSize: '0.875rem', fontWeight: '600'
                           }}
                         >
                           复制
@@ -452,14 +404,9 @@ export default function RoomView() {
                             value={room.stream_key}
                             readOnly
                             style={{
-                              flex: 1,
-                              padding: '8px',
-                              backgroundColor: '#202225',
-                              border: 'none',
-                              borderRadius: '4px',
-                              color: '#dcddde',
-                              fontSize: '0.875rem',
-                              fontFamily: 'monospace'
+                              flex: 1, padding: '8px', backgroundColor: '#202225',
+                              border: 'none', borderRadius: '4px', color: '#dcddde',
+                              fontSize: '0.875rem', fontFamily: 'monospace'
                             }}
                           />
                           <button
@@ -468,14 +415,9 @@ export default function RoomView() {
                               alert('已复制到剪贴板');
                             }}
                             style={{
-                              padding: '8px 12px',
-                              backgroundColor: '#4752c4',
-                              color: 'white',
-                              border: 'none',
-                              borderRadius: '4px',
-                              cursor: 'pointer',
-                              fontSize: '0.875rem',
-                              fontWeight: '600'
+                              padding: '8px 12px', backgroundColor: '#4752c4', color: 'white',
+                              border: 'none', borderRadius: '4px', cursor: 'pointer',
+                              fontSize: '0.875rem', fontWeight: '600'
                             }}
                           >
                             复制
@@ -495,167 +437,127 @@ export default function RoomView() {
           </div>
         </div>
 
-        {/* 右侧：用户列表 */}
+        {/* 右侧：用户列表 + 聊天 */}
         <div style={{
           width: '280px',
           backgroundColor: '#2f3136',
           borderLeft: '1px solid #202225',
           display: 'flex',
           flexDirection: 'column',
-          flexShrink: 0
+          flexShrink: 0,
+          overflow: 'hidden',
         }}>
-          <div style={{
-            padding: '16px',
-            borderBottom: '1px solid #202225'
-          }}>
-            <h3 style={{
-              fontSize: '0.75rem',
-              fontWeight: '700',
-              color: '#96989d',
-              textTransform: 'uppercase',
-              letterSpacing: '0.5px'
-            }}>
-              在线成员 — {users.length}
-            </h3>
-          </div>
+          {/* 上半：在线用户列表 */}
+          <div style={{ maxHeight: '45%', display: 'flex', flexDirection: 'column', flexShrink: 0 }}>
+            <div style={{ padding: '16px', borderBottom: '1px solid #202225', flexShrink: 0 }}>
+              <h3 style={{
+                fontSize: '0.75rem', fontWeight: '700', color: '#96989d',
+                textTransform: 'uppercase', letterSpacing: '0.5px'
+              }}>
+                在线成员 — {users.length}
+              </h3>
+            </div>
 
-          <div style={{
-            flex: 1,
-            overflowY: 'auto',
-            padding: '8px'
-          }}>
-            {users.map((user) => (
-              <div
-                key={user.user_id}
-                style={{
-                  padding: '8px',
-                  marginBottom: '2px',
-                  borderRadius: '4px',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '12px',
-                  transition: 'background-color 0.1s',
-                  cursor: 'pointer',
-                  position: 'relative'
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.backgroundColor = '#36393f';
-                  const rect = e.currentTarget.getBoundingClientRect();
-                  setHoverPosition({ x: rect.left, y: rect.top + rect.height / 2 });
-                  setHoveredUser(user);
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.backgroundColor = 'transparent';
-                  setHoveredUser(null);
-                }}
-              >
-                {/* 头像 */}
-                <div style={{
-                  width: '32px',
-                  height: '32px',
-                  borderRadius: '50%',
-                  backgroundColor: user.avatar ? 'transparent' : '#5865f2',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  fontSize: '0.875rem',
-                  fontWeight: '700',
-                  color: 'white',
-                  flexShrink: 0,
-                  overflow: 'hidden'
-                }}>
-                  {user.avatar ? (
-                    <img
-                      src={user.avatar}
-                      alt={user.username}
+            <div style={{ overflowY: 'auto', padding: '8px' }}>
+              {users.map((u) => (
+                <div
+                  key={u.user_id}
+                  style={{
+                    padding: '8px', marginBottom: '2px', borderRadius: '4px',
+                    display: 'flex', alignItems: 'center', gap: '12px',
+                    transition: 'background-color 0.1s', cursor: 'pointer', position: 'relative'
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.backgroundColor = '#36393f';
+                    const rect = e.currentTarget.getBoundingClientRect();
+                    setHoverPosition({ x: rect.left, y: rect.top + rect.height / 2 });
+                    setHoveredUser(u);
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.backgroundColor = 'transparent';
+                    setHoveredUser(null);
+                  }}
+                >
+                  {/* 头像 */}
+                  <div style={{
+                    width: '32px', height: '32px', borderRadius: '50%',
+                    backgroundColor: u.avatar ? 'transparent' : '#5865f2',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    fontSize: '0.875rem', fontWeight: '700', color: 'white',
+                    flexShrink: 0, overflow: 'hidden'
+                  }}>
+                    {u.avatar ? (
+                      <img src={u.avatar} alt={u.username} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                    ) : (
+                      u.username?.charAt(0).toUpperCase() || '?'
+                    )}
+                  </div>
+
+                  {/* 用户信息 */}
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{
+                      fontSize: '0.875rem', fontWeight: '600',
+                      color: u.is_host ? '#faa81a' : '#dcddde',
+                      overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap'
+                    }}>
+                      {u.username || `用户${u.user_id}`}
+                      {u.is_host && ' 👑'}
+                    </div>
+                  </div>
+
+                  {/* 移交按钮 */}
+                  {isHost && !u.is_host && (
+                    <button
+                      onClick={(e) => { e.stopPropagation(); handleTransferHost(u.user_id); }}
                       style={{
-                        width: '100%',
-                        height: '100%',
-                        objectFit: 'cover'
+                        padding: '4px 8px', backgroundColor: '#4752c4', color: 'white',
+                        border: 'none', borderRadius: '3px', fontSize: '0.75rem',
+                        fontWeight: '600', cursor: 'pointer', transition: 'background-color 0.2s'
                       }}
-                    />
-                  ) : (
-                    user.username?.charAt(0).toUpperCase() || '?'
+                      onMouseOver={(e) => e.currentTarget.style.backgroundColor = '#3c45a3'}
+                      onMouseOut={(e) => e.currentTarget.style.backgroundColor = '#4752c4'}
+                    >
+                      移交
+                    </button>
                   )}
                 </div>
-
-                {/* 用户信息 */}
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{
-                    fontSize: '0.875rem',
-                    fontWeight: '600',
-                    color: user.is_host ? '#faa81a' : '#dcddde',
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                    whiteSpace: 'nowrap'
-                  }}>
-                    {user.username || `用户${user.user_id}`}
-                    {user.is_host && ' 👑'}
-                  </div>
-                </div>
-
-                {/* 移交按钮 */}
-                {isHost && !user.is_host && (
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleTransferHost(user.user_id);
-                    }}
-                    style={{
-                      padding: '4px 8px',
-                      backgroundColor: '#4752c4',
-                      color: 'white',
-                      border: 'none',
-                      borderRadius: '3px',
-                      fontSize: '0.75rem',
-                      fontWeight: '600',
-                      cursor: 'pointer',
-                      transition: 'background-color 0.2s'
-                    }}
-                    onMouseOver={(e) => e.currentTarget.style.backgroundColor = '#3c45a3'}
-                    onMouseOut={(e) => e.currentTarget.style.backgroundColor = '#4752c4'}
-                  >
-                    移交
-                  </button>
-                )}
-              </div>
-            ))}
+              ))}
+            </div>
           </div>
+
+          {/* 分隔线 */}
+          <div style={{ height: '1px', backgroundColor: '#202225', flexShrink: 0 }} />
+
+          {/* 下半：聊天 */}
+          <ChatBox
+            ref={chatBoxRef}
+            roomId={roomId || ''}
+            users={users}
+            currentUserId={userId}
+            hostId={hostId}
+            sendMessage={sendMessage}
+          />
         </div>
       </div>
 
       {/* 视频库侧边栏 */}
       {showVideoLibrary && (
         <div style={{
-          position: 'fixed',
-          top: 0,
-          left: 0,
-          right: 0,
-          bottom: 0,
+          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
           backgroundColor: 'rgba(0, 0, 0, 0.85)',
-          display: 'flex',
-          justifyContent: 'flex-end',
-          zIndex: 1000
+          display: 'flex', justifyContent: 'flex-end', zIndex: 1000
         }} onClick={() => setShowVideoLibrary(false)}>
           <div style={{
-            width: '400px',
-            backgroundColor: '#2f3136',
-            padding: '24px',
-            overflowY: 'auto'
+            width: '400px', backgroundColor: '#2f3136', padding: '24px', overflowY: 'auto'
           }} onClick={(e) => e.stopPropagation()}>
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '20px' }}>
               <h3 style={{ fontSize: '1.25rem', fontWeight: '700', color: '#fff' }}>视频库</h3>
               <button
                 onClick={() => setShowVideoLibrary(false)}
                 style={{
-                  padding: '8px',
-                  backgroundColor: 'transparent',
-                  color: '#b9bbbe',
-                  border: 'none',
-                  borderRadius: '4px',
-                  cursor: 'pointer',
-                  fontSize: '1.25rem',
-                  lineHeight: 1
+                  padding: '8px', backgroundColor: 'transparent', color: '#b9bbbe',
+                  border: 'none', borderRadius: '4px', cursor: 'pointer',
+                  fontSize: '1.25rem', lineHeight: 1
                 }}
               >
                 ✕
@@ -673,11 +575,8 @@ export default function RoomView() {
                     key={video.video_id}
                     onClick={() => handleChangeVideo(video)}
                     style={{
-                      padding: '12px',
-                      backgroundColor: '#36393f',
-                      borderRadius: '8px',
-                      cursor: 'pointer',
-                      transition: 'background-color 0.2s'
+                      padding: '12px', backgroundColor: '#36393f',
+                      borderRadius: '8px', cursor: 'pointer', transition: 'background-color 0.2s'
                     }}
                     onMouseOver={(e) => e.currentTarget.style.backgroundColor = '#42454a'}
                     onMouseOut={(e) => e.currentTarget.style.backgroundColor = '#36393f'}
@@ -698,132 +597,9 @@ export default function RoomView() {
         </div>
       )}
 
-      {/* 用户名片悬停卡片 - Discord 风格 */}
+      {/* 用户信息悬停卡片（用户列表区域） */}
       {hoveredUser && (
-        <div style={{
-          position: 'fixed',
-          left: `${hoverPosition.x - 320}px`,
-          top: `${hoverPosition.y}px`,
-          transform: 'translateY(-50%)',
-          width: '300px',
-          backgroundColor: '#18191c',
-          borderRadius: '8px',
-          boxShadow: '0 8px 16px rgba(0, 0, 0, 0.4)',
-          overflow: 'hidden',
-          zIndex: 2000,
-          pointerEvents: 'none'
-        }}>
-          {/* 顶部背景色块 */}
-          <div style={{
-            height: '60px',
-            backgroundColor: hoveredUser.is_host ? '#faa81a' : '#5865f2'
-          }} />
-
-          {/* 头像 */}
-          <div style={{
-            position: 'absolute',
-            top: '16px',
-            left: '16px',
-            width: '80px',
-            height: '80px',
-            borderRadius: '50%',
-            border: '6px solid #18191c',
-            backgroundColor: hoveredUser.avatar ? 'transparent' : '#5865f2',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            fontSize: '2rem',
-            fontWeight: '700',
-            color: 'white',
-            overflow: 'hidden'
-          }}>
-            {hoveredUser.avatar ? (
-              <img
-                src={hoveredUser.avatar}
-                alt={hoveredUser.username}
-                style={{
-                  width: '100%',
-                  height: '100%',
-                  objectFit: 'cover'
-                }}
-              />
-            ) : (
-              hoveredUser.username?.charAt(0).toUpperCase() || '?'
-            )}
-          </div>
-
-          {/* 内容区域 */}
-          <div style={{
-            padding: '16px',
-            paddingTop: '48px',
-            backgroundColor: '#2b2d31'
-          }}>
-            {/* 用户名 */}
-            <div style={{
-              fontSize: '1.25rem',
-              fontWeight: '700',
-              color: '#fff',
-              marginBottom: '4px',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '8px'
-            }}>
-              {hoveredUser.username || `用户${hoveredUser.user_id}`}
-              {hoveredUser.is_host && (
-                <span style={{
-                  fontSize: '1rem',
-                  color: '#faa81a'
-                }}>
-                  👑
-                </span>
-              )}
-            </div>
-
-            {/* 房主标签 */}
-            {hoveredUser.is_host && (
-              <div style={{
-                display: 'inline-block',
-                padding: '4px 8px',
-                backgroundColor: '#faa81a',
-                borderRadius: '4px',
-                fontSize: '0.75rem',
-                fontWeight: '700',
-                color: '#fff',
-                textTransform: 'uppercase',
-                marginBottom: '12px'
-              }}>
-                房主
-              </div>
-            )}
-
-            {/* Bio */}
-            {hoveredUser.bio && (
-              <div style={{
-                marginTop: '12px',
-                padding: '12px',
-                backgroundColor: '#1e1f22',
-                borderRadius: '4px',
-                fontSize: '0.875rem',
-                color: '#b5bac1',
-                lineHeight: '1.5'
-              }}>
-                {hoveredUser.bio}
-              </div>
-            )}
-
-            {/* 无 Bio 占位 */}
-            {!hoveredUser.bio && (
-              <div style={{
-                marginTop: '12px',
-                fontSize: '0.875rem',
-                color: '#6d6f78',
-                fontStyle: 'italic'
-              }}>
-                这个用户很懒，什么都没写~
-              </div>
-            )}
-          </div>
-        </div>
+        <UserCard user={hoveredUser} position={hoverPosition} />
       )}
     </>
   );
