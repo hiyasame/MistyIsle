@@ -14,7 +14,7 @@ import tempfile
 import subprocess
 import time
 from pathlib import Path
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 # 1. Define the Application and Image
 app = modal.App("video-hls-processor")
@@ -80,7 +80,7 @@ def process_video_task(video_id: str, webhook_url: str = None, segment_duration:
     r2_public_domain = os.environ.get("R2_PUBLIC_DOMAIN", f"{r2_endpoint}/{r2_bucket}")
 
     # 3天后过期时间
-    expire_time = datetime.utcnow() + timedelta(days=3)
+    expire_time = datetime.now(timezone.utc) + timedelta(days=3)
 
     # Standard S3 client for R2
     s3_client = boto3.client(
@@ -165,20 +165,38 @@ def process_video_task(video_id: str, webhook_url: str = None, segment_duration:
             print(f"⚠️ Probing failed: {e}, falling back to full transcode.")
 
         # ===== Stage 2: modal_slice =====
-        # 判断是否可以走秒切（Copy）模式
-        # 1. H.264 + AAC: 全平台最强兼容，直接 copy 到 fmp4
-        # 2. AV1 + Opus: 现代高清标准，直接 copy 到 fmp4
-        is_h264_aac = (v_codec == "h264" and a_codec == "aac")
-        is_av1_opus = (v_codec == "av1" and a_codec == "opus")
-        
-        use_copy = is_h264_aac or is_av1_opus
-        
-        if use_copy:
+        # 三路决策：优先省时，次之兼容
+        #
+        # 路径 A - 完全 Copy (最快，近乎零耗时):
+        #   视频:  H.264 (h264)
+        #   音频:  AAC (aac) 
+        #   或者: AV1 (av1) + Opus (opus)  -- 两者都支持 fMP4 直接封装
+        #
+        # 路径 B - 半转码 (较快，仅转音频):
+        #   视频: H.264 或 AV1（直接 copy）
+        #   音频: 其他格式 (DTS, AC3, EAC3, Vorbis, MP3 等)
+        #   直接跳过视频转码，只把音频转成 AAC，节省 80%+ 时间
+        #
+        # 路径 C - 全转码 (兜底，最慢但100%兼容):
+        #   其余所有格式 (HEVC, VP9 等)
+
+        WEB_SAFE_V = {"h264", "av1"}   # 不需要转视频的格式
+        WEB_SAFE_A = {"aac"}           # 不需要转音频的格式
+        WEB_COPY_A = {"opus"}          # 与 AV1 搭配可直接 copy 的音频
+
+        is_full_copy = (v_codec in WEB_SAFE_V and a_codec in WEB_SAFE_A) or \
+                       (v_codec == "av1" and a_codec == "opus")
+        is_copy_v_transcode_a = (not is_full_copy) and (v_codec in WEB_SAFE_V)
+
+        if is_full_copy:
             action_name = "Fast Copy (Muxing only)"
             progress_msg = f"Ultra-fast HLS muxing ({v_codec}/{a_codec})"
+        elif is_copy_v_transcode_a:
+            action_name = f"Semi-transcode (copy video, transcode audio {a_codec}→aac)"
+            progress_msg = f"Transcoding audio only ({v_codec}/{a_codec}→aac)"
         else:
-            action_name = "Transcoding to HLS"
-            progress_msg = f"Transcoding and slicing video into HLS"
+            action_name = "Full Transcode"
+            progress_msg = f"Transcoding video+audio ({v_codec}/{a_codec}→h264/aac)"
 
         print(f"🔪 [Stage 2/4] modal_slice: {action_name} (segment={segment_duration}s)...")
         send_webhook(webhook_url, {
@@ -189,13 +207,32 @@ def process_video_task(video_id: str, webhook_url: str = None, segment_duration:
         })
 
         m3u8_path = hls_output_dir / "index.m3u8"
-        
-        if use_copy:
-             ffmpeg_cmd = [
+
+        if is_full_copy:
+            # 路径 A: 完全 Copy，使用 fMP4（支持 H.264 和 AV1）
+            ffmpeg_cmd = [
                 "ffmpeg", "-i", str(local_input),
-                "-c", "copy",                # 直接流拷贝，速度极快
+                "-c", "copy",
                 "-f", "hls",
-                "-hls_segment_type", "fmp4", # Copy 模式推荐使用 fMP4 以支持 AV1
+                "-hls_segment_type", "fmp4",
+                "-hls_fmp4_init_filename", "init.mp4",
+                "-hls_time", str(segment_duration),
+                "-hls_list_size", "0",
+                "-hls_segment_filename", str(hls_output_dir / "seg_%03d.m4s"),
+                "-y", str(m3u8_path)
+            ]
+        elif is_copy_v_transcode_a:
+            # 路径 B: 视频 Copy，音频转 AAC
+            # 使用 fMP4 以兼容 H.264 和 AV1 的直接封装
+            ffmpeg_cmd = [
+                "ffmpeg", "-i", str(local_input),
+                "-c:v", "copy",              # 视频流直接拷贝，省去昂贵的重编码
+                "-c:a", "aac",               # 仅将音频转码为 AAC
+                "-b:a", "128k",
+                "-ac", "2",                  # 强制双声道（兼容性）
+                "-ar", "44100",              # 统一采样率
+                "-f", "hls",
+                "-hls_segment_type", "fmp4", # fMP4 支持 H.264/AV1 视频 copy
                 "-hls_fmp4_init_filename", "init.mp4",
                 "-hls_time", str(segment_duration),
                 "-hls_list_size", "0",
@@ -203,13 +240,14 @@ def process_video_task(video_id: str, webhook_url: str = None, segment_duration:
                 "-y", str(m3u8_path)
             ]
         else:
+            # 路径 C: 全转码，兜底方案
             ffmpeg_cmd = [
                 "ffmpeg", "-i", str(local_input),
                 "-c:v", "libx264", "-preset", "ultrafast",
                 "-tune", "zerolatency", "-profile:v", "main", "-level", "4.0",
                 "-pix_fmt", "yuv420p", "-g", "60", "-keyint_min", "60", "-sc_threshold", "0",
                 "-c:a", "aac", "-b:a", "128k", "-ac", "2", "-ar", "44100",
-                "-f", "hls", # 转码模式依然使用传统的 TS
+                "-f", "hls",
                 "-hls_time", str(segment_duration),
                 "-hls_list_size", "0",
                 "-hls_segment_filename", str(hls_output_dir / "seg_%03d.ts"),
@@ -333,10 +371,10 @@ def process_video_task(video_id: str, webhook_url: str = None, segment_duration:
             "progress": 100,
             "playlist_path": playlist_path,
             "segments_count": uploaded_count,
-            "is_copy": use_copy,
+            "is_copy": is_full_copy,
             "v_codec": v_codec,
             "a_codec": a_codec,
-            "message": f"Completed ({'Copy' if use_copy else 'Transcode'})"
+            "message": f"Completed ({'Full Copy' if is_full_copy else 'Semi' if is_copy_v_transcode_a else 'Full Transcode'})"
         }
 
         send_webhook(webhook_url, result_payload)
