@@ -22,8 +22,30 @@ export default function VideoManagementView() {
   const [isUploading, setIsUploading] = useState(false);
   const [uploadFile, setUploadFile] = useState<File | null>(null);
   const [uploadTitle, setUploadTitle] = useState('');
-  const [uploadProgress, setUploadProgress] = useState(0);
+  const [uploadProgress, setUploadProgress] = useState(0);     // 0-100
+  const [uploadedBytes, setUploadedBytes] = useState(0);       // 已上传字节
+  const [totalBytes, setTotalBytes] = useState(0);             // 总字节
   const [uploadStep, setUploadStep] = useState<'idle' | 'init' | 'uploading' | 'processing'>('idle');
+
+  // 离开页面拦截
+  useEffect(() => {
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (isUploading) {
+        e.preventDefault();
+        e.returnValue = '视频正在上传中，离开页面将中断上传。确定要离开吗？';
+        return e.returnValue;
+      }
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [isUploading]);
+
+  // 格式化字节数
+  const formatBytes = (bytes: number) => {
+    if (bytes === 0) return '0 B';
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+  };
 
   // 预览相关状态
   const [previewVideo, setPreviewVideo] = useState<Video | null>(null);
@@ -97,6 +119,8 @@ export default function VideoManagementView() {
       setIsUploading(true);
       setUploadStep('init');
       setUploadProgress(0);
+      setUploadedBytes(0);
+      setTotalBytes(uploadFile.size);
 
       // 1. 初始化上传
       const title = uploadTitle.trim() || uploadFile.name;
@@ -113,21 +137,36 @@ export default function VideoManagementView() {
 
       const { video_id, presigned_url } = initRes.data;
 
-      // 2. 直接上传到 R2
+      // 2. 使用 XHR 上传到 R2（支持进度追踪）
       setUploadStep('uploading');
-      const uploadResponse = await fetch(presigned_url, {
-        method: 'PUT',
-        body: uploadFile,
-        headers: {
-          'Content-Type': uploadFile.type || 'video/mp4'
-        }
+      await new Promise<void>((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+
+        xhr.upload.addEventListener('progress', (event) => {
+          if (event.lengthComputable) {
+            setUploadedBytes(event.loaded);
+            setUploadProgress(Math.round((event.loaded / event.total) * 100));
+          }
+        });
+
+        xhr.addEventListener('load', () => {
+          if (xhr.status >= 200 && xhr.status < 300) {
+            resolve();
+          } else {
+            reject(new Error(`Upload to R2 failed (HTTP ${xhr.status})`));
+          }
+        });
+
+        xhr.addEventListener('error', () => reject(new Error('Network error during upload')));
+        xhr.addEventListener('abort', () => reject(new Error('Upload aborted')));
+
+        xhr.open('PUT', presigned_url);
+        xhr.setRequestHeader('Content-Type', uploadFile.type || 'video/mp4');
+        xhr.send(uploadFile);
       });
 
-      if (!uploadResponse.ok) {
-        throw new Error('Upload to R2 failed');
-      }
-
       setUploadProgress(100);
+      setUploadedBytes(uploadFile.size);
 
       // 3. 触发处理
       setUploadStep('processing');
@@ -145,6 +184,8 @@ export default function VideoManagementView() {
       setUploadTitle('');
       setUploadStep('idle');
       setUploadProgress(0);
+      setUploadedBytes(0);
+      setTotalBytes(0);
 
       alert('视频已开始处理，请稍后查看进度');
     } catch (err: any) {
@@ -287,30 +328,84 @@ export default function VideoManagementView() {
           </div>
 
           {uploadFile && (
-            <button
-              onClick={handleUpload}
-              disabled={isUploading}
-              style={{
-                width: '100%',
-                padding: '12px',
-                backgroundColor: isUploading ? '#3c845e' : '#23a55a',
-                color: 'white',
-                border: 'none',
-                borderRadius: '4px',
-                fontSize: '1rem',
-                fontWeight: '600',
-                cursor: isUploading ? 'not-allowed' : 'pointer',
-                transition: 'background-color 0.2s'
-              }}
-              onMouseOver={(e) => !isUploading && (e.currentTarget.style.backgroundColor = '#1e7e45')}
-              onMouseOut={(e) => !isUploading && (e.currentTarget.style.backgroundColor = '#23a55a')}
-            >
-              {isUploading ? (
-                uploadStep === 'init' ? '初始化...' :
-                uploadStep === 'uploading' ? `上传中 ${uploadProgress}%` :
-                '处理中...'
-              ) : '开始上传'}
-            </button>
+            <>
+              <button
+                onClick={handleUpload}
+                disabled={isUploading}
+                style={{
+                  width: '100%',
+                  padding: '12px',
+                  backgroundColor: isUploading ? '#3c845e' : '#23a55a',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '4px',
+                  fontSize: '1rem',
+                  fontWeight: '600',
+                  cursor: isUploading ? 'not-allowed' : 'pointer',
+                  transition: 'background-color 0.2s'
+                }}
+                onMouseOver={(e) => !isUploading && (e.currentTarget.style.backgroundColor = '#1e7e45')}
+                onMouseOut={(e) => !isUploading && (e.currentTarget.style.backgroundColor = '#23a55a')}
+              >
+                {isUploading ? (
+                  uploadStep === 'init' ? '⏳ 初始化中...' :
+                    uploadStep === 'uploading' ? `⬆️ 上传中 ${uploadProgress}%  ${formatBytes(uploadedBytes)} / ${formatBytes(totalBytes)}` :
+                      '⚙️ 云端处理中，请勿关闭页面...'
+                ) : '开始上传'}
+              </button>
+
+              {/* 上传进度条 */}
+              {isUploading && uploadStep === 'uploading' && (
+                <div style={{ marginTop: '12px' }}>
+                  {/* 警告提示 */}
+                  <div style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    marginBottom: '8px',
+                    padding: '8px 12px',
+                    backgroundColor: 'rgba(250, 173, 20, 0.15)',
+                    borderRadius: '4px',
+                    border: '1px solid rgba(250, 173, 20, 0.3)',
+                  }}>
+                    <span style={{ fontSize: '0.85rem' }}>⚠️</span>
+                    <span style={{ fontSize: '0.8rem', color: '#faad14', fontWeight: '600' }}>
+                      上传中，请不要刷新或关闭页面
+                    </span>
+                  </div>
+
+                  {/* 进度条背景 */}
+                  <div style={{
+                    width: '100%',
+                    height: '6px',
+                    backgroundColor: '#202225',
+                    borderRadius: '3px',
+                    overflow: 'hidden',
+                  }}>
+                    {/* 进度条填充 */}
+                    <div style={{
+                      height: '100%',
+                      width: `${uploadProgress}%`,
+                      background: 'linear-gradient(90deg, #5865f2, #3ba55d)',
+                      borderRadius: '3px',
+                      transition: 'width 0.3s ease',
+                    }} />
+                  </div>
+
+                  {/* 数字进度 */}
+                  <div style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    marginTop: '6px',
+                    fontSize: '0.75rem',
+                    color: '#72767d',
+                  }}>
+                    <span>{formatBytes(uploadedBytes)} / {formatBytes(totalBytes)}</span>
+                    <span>{uploadProgress}%</span>
+                  </div>
+                </div>
+              )}
+            </>
           )}
         </div>
 
