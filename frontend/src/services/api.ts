@@ -1,5 +1,5 @@
-import { API_BASE_URL } from '../utils/config';
-import type { ApiResponse, LoginResponse, User, Room, Video, ChatMessage } from '../types';
+import {API_BASE_URL} from '../utils/config';
+import type {ApiResponse, ChatMessage, LoginResponse, Room, User, Video} from '../types';
 
 // 获取 token
 function getAuthToken(): string {
@@ -35,7 +35,16 @@ async function request<T = any>(url: string, options: RequestInit = {}): Promise
   });
 
   if (!response.ok) {
-    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      // 优先读取后端返回的 JSON 错误信息，避免依赖 statusText（经 Nginx 代理后为空）
+      try {
+          const errBody = await response.json();
+          throw new Error(errBody.message || errBody.error || `HTTP ${response.status}`);
+      } catch (e) {
+          if (e instanceof SyntaxError) {
+              throw new Error(`HTTP ${response.status}`);
+          }
+          throw e;
+      }
   }
 
   return response.json();
@@ -95,7 +104,13 @@ export const userApi = {
     });
 
     if (!response.ok) {
-      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      try {
+        const errBody = await response.json();
+        throw new Error(errBody.message || errBody.error || `HTTP ${response.status}`);
+      } catch (e) {
+        if (e instanceof SyntaxError) throw new Error(`HTTP ${response.status}`);
+        throw e;
+      }
     }
 
     return response.json();
@@ -241,7 +256,13 @@ export const roomApi = {
     });
 
     if (!response.ok) {
-      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      try {
+        const errBody = await response.json();
+        throw new Error(errBody.message || errBody.error || `HTTP ${response.status}`);
+      } catch (e) {
+        if (e instanceof SyntaxError) throw new Error(`HTTP ${response.status}`);
+        throw e;
+      }
     }
     return response.json();
   }
